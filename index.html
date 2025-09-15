@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KSCCE Hospital Checklist v1.6.5 — Login + Local Save</title>
+  <title>KSCCE Hospital Checklist v1.6.6 — Login + Local Save</title>
 
   <!-- Tailwind CDN (for preview; compile for production) -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -21,14 +21,12 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
   <style>
-    /* Screen vs Print isolation */
+    /* Screen vs Print isolation (used only for in-page preview) */
     .screen-only { display: block; }
     .print-only { display: none; }
     @media print {
       .screen-only { display: none !important; }
-      .print-only { display: none; }
-      body.print-full #sheet-full.print-only { display: block !important; }
-      body.print-noncomp #sheet-noncomp.print-only { display: block !important; }
+      .print-only { display: block !important; }
       body { background: #fff !important; }
     }
   </style>
@@ -37,14 +35,14 @@
   <!-- React root (screen-only so UI never prints) -->
   <div id="root" class="screen-only"></div>
 
-  <!-- Dedicated print mounts -->
+  <!-- Dedicated print mounts (for extracting HTML, not for direct print) -->
   <div id="sheet-full" class="print-only"></div>
   <div id="sheet-noncomp" class="print-only"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
 
-    const PROJECT_VERSION = "v1.6.5-local";
+    const PROJECT_VERSION = "v1.6.6-local";
 
     // ---------------- Firebase (Compat) ----------------
     const FIREBASE_CONFIG = {
@@ -381,6 +379,59 @@
       );
     }
 
+    // ---------------- Utilities ----------------
+    function migrateLoadedData(payload){
+      // Accepts older schema: {meta, answers} without version; also older keys Annx1..4
+      const out = { meta: {}, answers: {} };
+      try{
+        const meta = payload.meta || {};
+        const answers = payload.answers || {};
+
+        // Basic copy
+        out.meta = {
+          hospital: meta.hospital || "",
+          address: meta.address || "",
+          visitDates: meta.visitDates || meta.visitDate || "",
+          assessor: meta.assessor || meta.assessorName || ""
+        };
+
+        // Key migration: Annx1- -> Annexure 1-
+        const migrateKey = (k) => k
+          .replace(/^Annx1-/, "Annexure 1-")
+          .replace(/^Annx2-/, "Annexure 2-")
+          .replace(/^Annx3-/, "Annexure 3-")
+          .replace(/^Annx4-/, "Annexure 4-");
+
+        Object.keys(answers).forEach(k => {
+          const nk = migrateKey(k);
+          const v = answers[k];
+          if (v && typeof v === "object") out.answers[nk] = { v: v.v || v.value || "", note: v.note || v.notes || "" };
+          else if (typeof v === "string") out.answers[nk] = { v, note: "" };
+        });
+      }catch(e){ console.warn("Migration failed:", e); }
+      return out;
+    }
+
+    function openPrintWindow(inner){
+      const css = `
+        body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Noto Sans, "Apple Color Emoji","Segoe UI Emoji"; margin: 0; padding: 0; color: #0f172a; }
+        h1 { font-size: 18px; margin: 12px 0 6px; }
+        h2 { font-size: 14px; margin: 10px 0 6px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 12px; vertical-align: top; }
+        thead th { background: #f1f5f9; }
+        .wrap { padding: 20px; }
+        .mt-16 { margin-top: 16px; }
+      `;
+      const win = window.open('', '_blank');
+      if (!win) { alert("Popup blocked. Please allow popups for this site to export."); return; }
+      win.document.open();
+      win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Export</title><style>${css}</style></head><body><div class="wrap">${inner}</div></body></html>`);
+      win.document.close();
+      // On iOS Safari, print after a tick
+      setTimeout(()=>{ try { win.focus(); win.print(); } catch(e) {} }, 250);
+    }
+
     // ---------------- Auth ----------------
     function AuthScreen(){
       const [tab, setTab] = useState("login");
@@ -523,17 +574,35 @@
       const [lastEdited,setLastEdited]=useState("");
 
       const storageKey = `kscce-${PROJECT_VERSION}-${userEmail||"local"}`;
-      useEffect(()=>{ const raw=localStorage.getItem(storageKey); if(raw) try{const p=JSON.parse(raw); setMeta(p.meta||{}); setAnswers(p.answers||{});}catch{} },[]);
-      useEffect(()=>{ localStorage.setItem(storageKey,JSON.stringify({meta,answers})); setLastEdited(nowStr()); },[meta,answers]);
+      useEffect(()=>{
+        // Load from localStorage if present
+        const raw=localStorage.getItem(storageKey);
+        if(raw){
+          try{ const p=JSON.parse(raw); setMeta(p.meta||{}); setAnswers(p.answers||{}); }catch{}
+        }
+      },[]);
+      useEffect(()=>{ localStorage.setItem(storageKey,JSON.stringify({version:PROJECT_VERSION,meta,answers})); setLastEdited(nowStr()); },[meta,answers]);
 
-      // Local save / load / new
+      // Local save / load / new (with migration)
       function saveLocal(){
-        const data = JSON.stringify({meta,answers},null,2);
+        const data = JSON.stringify({version:PROJECT_VERSION, meta, answers}, null, 2);
         const blob = new Blob([data],{type:'application/json'});
         const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`${meta.hospital||'Hospital'}-${new Date().toISOString().slice(0,10)}.json`.replace(/\s+/g,'_');
         document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 500);
       }
-      function loadLocal(e){ const file=e.target.files?.[0]; if(!file) return; const r=new FileReader(); r.onload=()=>{ try{ const j=JSON.parse(r.result); setMeta(j.meta||{}); setAnswers(j.answers||{}); }catch{ alert('Invalid JSON'); } }; r.readAsText(file); e.target.value=''; }
+      function loadLocal(e){
+        const file=e.target.files?.[0]; if(!file) return;
+        const r=new FileReader();
+        r.onload=()=>{
+          try{
+            const payload=JSON.parse(r.result);
+            const migrated=migrateLoadedData(payload);
+            setMeta(migrated.meta||{});
+            setAnswers(migrated.answers||{});
+          }catch{ alert('Invalid JSON'); }
+        };
+        r.readAsText(file); e.target.value='';
+      }
       function newAssessment(){ if(confirm('Start a new assessment?')){ setMeta({hospital:'',address:'',visitDates:'',assessor:''}); setAnswers({}); } }
 
       // Non‑compliances (live)
@@ -541,7 +610,7 @@
         const out=[]; for(const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){ for(const it of s.items){ const k=`${s.code}-${it.id}`; if(answers[k]?.v==="No") out.push({section:s.code + ". " + s.title,item:it.text,note:answers[k]?.note||''}); } } return out;
       },[answers]);
 
-      // Prepare React 18 roots for print sheets
+      // Prepare React 18 roots for export content (to grab innerHTML)
       const fullRootRef = useRef(null);
       const nonRootRef  = useRef(null);
       useEffect(()=>{
@@ -550,15 +619,24 @@
         return ()=>{ try{ fullRootRef.current?.unmount(); }catch{} try{ nonRootRef.current?.unmount(); }catch{} };
       },[]);
 
-      function printFull(){
+      function exportFull(){
+        const mount = document.getElementById('sheet-full');
         fullRootRef.current.render(<FullReport meta={meta} answers={answers} />);
-        document.body.classList.add('print-full');
-        setTimeout(()=>{ window.print(); setTimeout(()=>{ document.body.classList.remove('print-full'); fullRootRef.current.render(null); }, 200); }, 50);
+        // Defer to allow React to commit
+        setTimeout(()=>{
+          const inner = mount.innerHTML;
+          fullRootRef.current.render(null);
+          openPrintWindow(inner);
+        }, 40);
       }
-      function printNonComp(){
+      function exportNonComp(){
+        const mount = document.getElementById('sheet-noncomp');
         nonRootRef.current.render(<NonCompReport meta={meta} answers={answers} />);
-        document.body.classList.add('print-noncomp');
-        setTimeout(()=>{ window.print(); setTimeout(()=>{ document.body.classList.remove('print-noncomp'); nonRootRef.current.render(null); }, 200); }, 50);
+        setTimeout(()=>{
+          const inner = mount.innerHTML;
+          nonRootRef.current.render(null);
+          openPrintWindow(inner);
+        }, 40);
       }
 
       const signOut = () => { try { auth().signOut(); } catch {} };
@@ -570,8 +648,8 @@
           <main className="max-w-6xl mx-auto px-4 py-6">
             {/* Toolbar ABOVE meta (screen only; never prints) */}
             <div className="mb-4 bg-white border border-slate-200 rounded-2xl shadow-sm px-4 py-3 flex flex-wrap gap-2 items-center">
-              <button onClick={printFull} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm shadow">Export Full Report (PDF)</button>
-              <button onClick={printNonComp} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm shadow">Export Non‑Compliances (PDF)</button>
+              <button onClick={exportFull} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm shadow">Export Full Report (PDF)</button>
+              <button onClick={exportNonComp} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm shadow">Export Non‑Compliances (PDF)</button>
               <span className="h-6 w-px bg-slate-200 mx-1"></span>
               <button onClick={saveLocal} className="px-4 py-2 rounded-xl bg-white border text-slate-800 text-sm">Save As (Local)</button>
               <label className="px-4 py-2 rounded-xl bg-white border text-slate-800 text-sm cursor-pointer">
