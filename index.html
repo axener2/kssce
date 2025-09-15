@@ -1,236 +1,574 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KSSCE Hospital Checklist</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KSCCE Hospital Checklist v1.1</title>
+  <!-- Tailwind (CDN) -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body{background:linear-gradient(180deg,#f0f8ff,#fff);} .hidden{display:none}
-  </style>
-  <!-- Firebase v9 compat (non-module, broadest compatibility) -->
+  <!-- React + ReactDOM UMD -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <!-- Babel for in-browser JSX (good for GitHub Pages quick start) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Firebase Compat SDKs -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-</head>
-<body class="text-slate-900">
-  <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-200">
-    <div class="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
-      <h1 class="text-lg font-semibold">KSSCE Hospital Checklist</h1>
-      <div id="auth-status" class="text-sm"></div>
-    </div>
-  </header>
-
-  <main class="max-w-4xl mx-auto px-4">
-    <!-- Auth Card -->
-    <section id="auth-card" class="max-w-xl mx-auto mt-8">
-      <div class="bg-white rounded-2xl border border-slate-200 shadow">
-        <div class="p-6">
-          <h2 class="text-2xl font-bold mb-2">Sign in</h2>
-          <p class="text-slate-500 text-sm mb-4">Only allow‑listed users can access.</p>
-          <div class="grid gap-3">
-            <input id="email" type="email" class="rounded-xl border border-slate-300 px-3 py-2" placeholder="you@org.in">
-            <input id="password" type="password" class="rounded-xl border border-slate-300 px-3 py-2" placeholder="Password">
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <button id="btn-signin" class="rounded-xl bg-sky-600 text-white px-4 py-2">Sign in</button>
-              <button id="btn-signup" class="rounded-xl bg-slate-900 text-white px-4 py-2">Create account</button>
-              <button id="btn-forgot" class="rounded-xl bg-slate-100 text-slate-800 px-4 py-2">Forgot password</button>
-            </div>
-          </div>
-          <div id="auth-msg" class="text-red-600 text-sm mt-3 min-h-6"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- App -->
-    <section id="app" class="hidden mt-6 space-y-4 pb-10">
-      <div class="bg-white rounded-2xl border border-slate-200 p-4">
-        <div class="grid gap-3 sm:grid-cols-3">
-          <label class="text-sm text-slate-600 grid gap-1">Hospital Name
-            <input id="hospital-name" class="rounded-xl border border-slate-300 px-3 py-2">
-          </label>
-          <label class="text-sm text-slate-600 grid gap-1">Address
-            <input id="hospital-address" class="rounded-xl border border-slate-300 px-3 py-2">
-          </label>
-          <label class="text-sm text-slate-600 grid gap-1">Date(s) of Visit
-            <input id="visit-date" type="date" class="rounded-xl border border-slate-300 px-3 py-2">
-          </label>
-        </div>
-        <div class="flex flex-wrap gap-2 mt-4">
-          <button id="btn-save" class="rounded-xl bg-sky-600 text-white px-4 py-2">Save</button>
-          <button id="btn-pdf" class="rounded-xl bg-slate-900 text-white px-4 py-2">Export Summary PDF</button>
-          <button id="btn-csv" class="rounded-xl bg-slate-100 text-slate-800 px-4 py-2">Export Non‑Compliance CSV</button>
-          <div id="save-status" class="text-sm text-slate-500 px-2 py-2"></div>
-        </div>
-      </div>
-
-      <nav class="flex flex-wrap gap-2">
-        <button class="tab active rounded-full bg-sky-600 text-white px-4 py-2" data-tab="checklist">Checklist</button>
-        <button class="tab rounded-full bg-slate-200 text-slate-800 px-4 py-2" data-tab="annex13">Annexures 1–3</button>
-        <button class="tab rounded-full bg-slate-200 text-slate-800 px-4 py-2" data-tab="annex4">Annexure 4</button>
-        <button class="tab rounded-full bg-slate-200 text-slate-800 px-4 py-2" data-tab="noncomp">Non‑Compliance</button>
-      </nav>
-
-      <section id="panel-checklist"></section>
-      <section id="panel-annex13" class="hidden"></section>
-      <section id="panel-annex4" class="hidden"></section>
-      <section id="panel-noncomp" class="hidden">
-        <div id="noncomp-list" class="space-y-2"></div>
-      </section>
-    </section>
-  </main>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.3/jspdf.plugin.autotable.min.js"></script>
-
-  <script>
-  // 1) Firebase init (compat)
-  const firebaseConfig = {
-    apiKey: "AIzaSyDKSvo5KNuXPq83284_6GOnxXisKA_lSks",
-    authDomain: "kssce-51e3e.firebaseapp.com",
-    projectId: "kssce-51e3e",
-    storageBucket: "kssce-51e3e.firebasestorage.app",
-    messagingSenderId: "308291560377",
-    appId: "1:308291560377:web:ae634dd42e9ac1459e0c68"
-  };
-  firebase.initializeApp(firebaseConfig);
-  const auth = firebase.auth();
-  const db = firebase.firestore();
-
-  // 2) Helpers
-  const $ = s => document.querySelector(s);
-  const $$ = s => Array.from(document.querySelectorAll(s));
-  const ok = m => { const el=$("#auth-msg"); el.textContent=m; el.classList.remove("text-red-600"); el.classList.add("text-emerald-600"); setTimeout(()=>{ el.textContent=""; el.classList.remove("text-emerald-600"); el.classList.add("text-red-600"); }, 2500) };
-  const err = m => { const el=$("#auth-msg"); el.textContent=m; el.classList.remove("text-emerald-600"); el.classList.add("text-red-600"); };
-
-  // 3) Auth listeners (no modules; always clickable)
-  $("#btn-signin").onclick = async () => {
-    try { await auth.signInWithEmailAndPassword($("#email").value.trim().toLowerCase(), $("#password").value); }
-    catch(e){ err("Invalid credentials."); }
-  };
-  $("#btn-signup").onclick = async () => {
-    const email = $("#email").value.trim().toLowerCase();
-    if(!email || !email.includes("@")) return err("Enter a valid email.");
-    const snap = await db.collection("allowlist").doc(email).get();
-    if(!snap.exists) return err("This email is not on the allow‑list.");
-    try { await auth.createUserWithEmailAndPassword(email, $("#password").value); ok("Account created."); }
-    catch(e){ err("Account creation failed."); }
-  };
-  $("#btn-forgot").onclick = async () => {
-    const email = $("#email").value.trim().toLowerCase();
-    if(!email) return err("Enter your email first.");
-    try { await auth.sendPasswordResetEmail(email); ok("Password reset email sent."); }
-    catch(e){ err("Could not send reset email."); }
-  };
-
-  auth.onAuthStateChanged(user => {
-    if(user){
-      $("#auth-status").innerHTML = 'Signed in as ' + (user.email||'') + ' <button id="logout" class="ml-2 text-sky-600">Sign out</button>';
-      $("#auth-card").classList.add("hidden");
-      $("#app").classList.remove("hidden");
-      $("#logout").onclick = () => auth.signOut();
-    } else {
-      $("#auth-status").innerHTML = "";
-      $("#auth-card").classList.remove("hidden");
-      $("#app").classList.add("hidden");
+  <style>
+    @media screen { #sheet-full, #sheet-noncomp { display:none !important; } }
+    @media print {
+      header, .print\:hidden, .print-hidden { display:none !important; }
+      body { background:#fff; }
+      .print-full #sheet-full { display:block !important; }
+      .print-full #sheet-noncomp { display:none !important; }
+      .print-noncomp #sheet-full { display:none !important; }
+      .print-noncomp #sheet-noncomp { display:block !important; }
     }
-  });
+  </style>
+</head>
+<body class="bg-slate-100">
+  <div id="root"></div>
 
-  // 4) Checklist data (full) – trimmed to essentials for brevity; can be expanded
-  const CHECKLIST = [
-    { code:"A", title:"General", items:[
-      "Hospital should adopt infection control measures",
-      "Appropriate arrangements for Bio medical waste management should be in place",
-      "Medical Records should be maintained by either in hard or soft copy",
-      "Laboratory Services should be available (dedicated set-up or collection centre with forwarding and reporting)",
-      "Birth and death information register should be maintained",
-      "Back-up facility for electricity failure covering essential activities should be available",
-      "Fire extinguishers should be available",
-      "Facility for clean/sterilized linens should be available",
-      "Ambulance service arrangement should be in place",
-      "Display of services provided and rates & packages",
-      "Information regarding the services and approximate charges provided by hospital administration"
-    ]},
-    { code:"B", title:"OPD", items:[
-      "Availability of stethoscope, torch, thermometer (non-mercury preferred), BP apparatus (non-mercury preferred), hand-wash facility, examination table, chairs/stools for doctor, patient and bystander",
-      "Female attendant for female patients; privacy to patients; information material for patients",
-      "Registration of patients (Name, Age, Sex, contact details at least mobile) available in hard or soft copy",
-      "Waiting area, drinking water facility and separate male & female toilets available",
-      "Names of doctors with their qualifications displayed"
-    ]},
-    { code:"C", title:"Casualty Services", items:[
-      "Human resources supporting casualty services available during working hours",
-      "Emergency drugs and equipment available according to scope of services",
-      "Signage board of casualty displayed at entrance and easily visible",
-      "Patient-friendly ramp or slope facility available",
-      "Stretchers/wheelchairs available"
-    ]},
-    { code:"D", title:"IPD", items:[
-      "Signboards of different departments and wards displayed",
-      "A doctor available on call",
-      "Personnel trained in nursing for at least 1 year available",
-      "Beds available to provide inpatient treatment",
-      "System to call nurses/attendants (Intercom/Call bell) present",
-      "Hand-washing facility/hand sanitizer, bed pan, waste bins, attendants chair/stool available",
-      "Drinking water facility and gender-specific toilets available"
-    ]}
-  ];
-  // (Annexures omitted in this compat sample to keep file small, but app still runs; we can splice full arrays later.)
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
 
-  let state = { sections:{}, annex13:{}, annex4:{} };
-  CHECKLIST.forEach(s=>s.items.forEach((_,i)=> state.sections[`${s.code}-${i}`]={value:"",remark:""}));
+    // --------------------- Firebase Init (Compat) ---------------------
+    const FIREBASE_CONFIG = {
+      apiKey: "AIzaSyDKSvo5KNuXPq83284_6GOnxXisKA_lSks",
+      authDomain: "kssce-51e3e.firebaseapp.com",
+      projectId: "kssce-51e3e",
+      storageBucket: "kssce-51e3e.appspot.com",
+      messagingSenderId: "308291560377",
+      appId: "1:308291560377:web:ae634dd42e9ac1459e0c68"
+    };
+    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    const auth = () => firebase.auth();
+    const db = () => firebase.firestore();
 
-  const optionHtml = (v,l)=>`<option value="${v}">${l}</option>`;
+    // --------------------- Data Model ---------------------
+    const YNN = ["Yes","No","N/A"]; // dropdown options
 
-  function renderChecklist(){
-    const m = $("#panel-checklist"); m.innerHTML = "";
-    CHECKLIST.forEach(section=>{
-      const box = document.createElement("div");
-      box.className="bg-white border border-slate-200 rounded-2xl mb-4 overflow-hidden";
-      box.innerHTML = `<div class="px-4 py-3 bg-slate-50 flex items-center justify-between">
-        <div class="font-semibold">${section.code}. ${section.title}</div>
-        <div class="text-xs text-slate-500">Items: ${section.items.length}</div></div>
-        <div class="p-2"></div>`;
-      const body = box.querySelector(".p-2");
-      section.items.forEach((text,idx)=>{
-        const key = `${section.code}-${idx}`;
-        const row = document.createElement("div");
-        row.className="grid gap-2 sm:grid-cols-[1fr,160px,260px] items-center border-b border-slate-100 px-2 py-2 last:border-b-0";
-        row.innerHTML = `<div class="text-sm">${text}</div>
-          <div><select data-key="${key}" class="w-full rounded-xl border border-slate-300 px-2 py-2">
-            ${optionHtml("","Select")}${optionHtml("YES","YES")}${optionHtml("NO","NO")}
-          </select></div>
-          <input data-remark="${key}" class="rounded-xl border border-slate-300 px-3 py-2" placeholder="Remarks (optional)">`;
-        body.appendChild(row);
-      });
-      m.appendChild(box);
-    });
-  }
-  renderChecklist();
+    const SECTIONS = [
+      { code: "A", title: "General", items: [
+        { id: "ic-measures", text: "Hospital adopts infection control measures" },
+        { id: "bmw", text: "Appropriate biomedical waste management in place" },
+        { id: "med-records", text: "Medical records maintained (hard/soft copy)" },
+        { id: "lab-services", text: "Laboratory services available (in-house/collection) with reporting" },
+        { id: "birth-death", text: "Birth & death information register maintained" },
+        { id: "power-backup", text: "Power backup covers essential activities" },
+        { id: "fire-ext", text: "Fire extinguishers available" },
+        { id: "linen", text: "Facility for clean/sterilized linens available" },
+        { id: "ambulance", text: "Ambulance service arrangement in place" },
+        { id: "display-services", text: "Display of services, rates & packages" },
+        { id: "charges-info", text: "Information on approximate charges provided" },
+      ]},
+      { code: "B", title: "OPD", items: [
+        { id: "opd-basics", text: "Stethoscope, torch, thermometer (non‑mercury), BP apparatus (non‑mercury), handwash, exam table, chairs/stools" },
+        { id: "female-attendant", text: "Female attendant for female patients; privacy & patient information material" },
+        { id: "registration", text: "Patient registration with name, age, sex, contact (mobile) in hard/soft copy" },
+        { id: "waiting-amenities", text: "Waiting area, drinking water, separate male/female toilets" },
+        { id: "doc-display", text: "Names & qualifications of doctors displayed" },
+      ]},
+      { code: "C", title: "Casualty / Emergency", items: [
+        { id: "cas-hr", text: "Adequate human resources during working hours" },
+        { id: "cas-drugs-eq", text: "Emergency drugs & equipment as per scope available" },
+        { id: "cas-signage", text: "Casualty signage visible at entrance" },
+        { id: "ramp", text: "Patient‑friendly ramp/slope available" },
+        { id: "stretchers", text: "Stretchers/wheelchairs available" },
+      ]},
+      { code: "D", title: "Inpatient (IPD)", items: [
+        { id: "dept-signs", text: "Department & ward signboards displayed" },
+        { id: "on-call-doc", text: "Doctor available on call" },
+        { id: "nursing-trained", text: "Nursing personnel trained ≥1 year available" },
+        { id: "beds", text: "Beds available for inpatient treatment" },
+        { id: "call-system", text: "System to call nurses/attendants (intercom/call bell)" },
+        { id: "ipd-basics", text: "Hand wash/sanitizer, bedpan, waste bins, attendant chair/stool available" },
+        { id: "ipd-amenities", text: "Drinking water & gender‑specific toilets available" },
+      ]},
+      { code: "E", title: "OP Cabin Registration Standards", items: [
+        { id: "physician-display", text: "Physician name, qualification & registration number displayed" },
+        { id: "op-equip", text: "Chairs/stool, exam table, torch, thermometer (non‑mercury), BP apparatus (non‑mercury), stethoscope" },
+        { id: "handwash-wait", text: "Handwashing, drinking water & waiting space present" },
+      ]},
+      { code: "F", title: "Laboratory Registration Standards", items: [
+        { id: "lab-consultant", text: "Consultant name, qualification & registration displayed" },
+        { id: "lab-charges", text: "Display of services & charges" },
+        { id: "lab-equip", text: "Equipment/instruments as per workload & scope" },
+      ]},
+      { code: "G", title: "Signage", items: [
+        { id: "bi-lang", text: "Signage in at least English & Malayalam; '24h emergency' desirable" },
+        { id: "name-board", text: "Hospital name board at prominent location" },
+        { id: "provider-reg", text: "Care provider name with registration number" },
+        { id: "reg-details", text: "Hospital registration details as per KCEA 2018" },
+        { id: "fee-structure", text: "Fee structure available (as per KCEA 2018)" },
+        { id: "timings", text: "Timings of hospital & services displayed" },
+        { id: "mandatory-info", text: "Mandatory information (e.g., PNDT) displayed as applicable" },
+        { id: "important-contacts", text: "Important contact numbers (blood banks, fire, police, ambulance)" },
+        { id: "hazard-signs", text: "Safety hazard & caution signs at appropriate places" },
+        { id: "fire-exit", text: "Fire exit signage" },
+        { id: "no-smoking", text: "'No Smoking' signage at prominent places" },
+      ]},
+      { code: "H", title: "Infrastructure – Other Requirements", items: [
+        { id: "entry", text: "Convenient entry point" },
+        { id: "pwd", text: "Accessibility per Persons with Disabilities Act / restricted mobility" },
+        { id: "hygiene", text: "Safe, clean, hygienic environment for all" },
+        { id: "water-power", text: "24h potable water & hand hygiene; 24h electricity via utility/UPS/gen" },
+        { id: "public-toilets", text: "Clean public toilets (separate male/female; disabled friendly)" },
+        { id: "furniture", text: "Adequate, maintained furniture/fixtures as per workload (see Annexure 1)" },
+      ]},
+      { code: "I", title: "Infrastructure – Space (Desirable unless stated)", items: [
+        { id: "waiting-100", text: "Reception & waiting: 100 sq.ft" },
+        { id: "consult-80", text: "Consultation cabin (with exam table): 80 sq.ft each" },
+        { id: "pharmacy-40", text: "Storage & pharmacy: 40 sq.ft" },
+        { id: "ancillary-60", text: "Ancillary area: 60 sq.ft" },
+        { id: "ward-circ", text: "Wards: 30% circulation for nursing, store, sanitary etc." },
+        { id: "ot-recep", text: "OT (minor): Reception & waiting 9.2 sq.m" },
+        { id: "ot-consult", text: "OT (minor): Consultation cabin 7.4 sq.m; exam 3.71 sq.m" },
+        { id: "ot-ancillary", text: "OT (minor): Storage/pharmacy/ancillary 5.57 sq.m" },
+        { id: "ward-areas", text: "Ward designated areas: nursing station, duty room, stores, utilities, janitor, toilets" },
+        { id: "ward-basin", text: "For 20‑bed ward: ≥1 working counter & ≥1 handwash basin" },
+        { id: "bed-gap", text: "Bed distance 1.0 m (desirable)" },
+        { id: "head-space", text: "Space at head end 0.25 m" },
+        { id: "door-corr", text: "Door width 1.2 m (desirable); corridor 2.5 m (desirable)" },
+      ]},
+      { code: "J", title: "Medical Equipment & Instruments", items: [
+        { id: "adequate-equip", text: "Adequate equipment/instruments per scope & beds" },
+        { id: "maint-sys", text: "System for maintenance of critical equipment" },
+        { id: "amc", text: "Equipment in good condition via periodic inspection/cleaning/AMC" },
+      ]},
+      { code: "K", title: "Drugs, Devices & Consumables", items: [
+        { id: "adequate-drugs", text: "Adequate drugs, devices, consumables" },
+        { id: "emg-drugs", text: "Emergency drugs & consumables available at all times" },
+        { id: "drug-storage", text: "Clean, lit, safe drug storage per law" },
+        { id: "inventory", text: "Defined procedures for storage, inventory & dispensing (pharmacy & care areas)" },
+      ]},
+      { code: "L", title: "Human Resources", items: [
+        { id: "nursing-hr", text: "Qualified/trained nursing staff per scope & regulations" },
+        { id: "paramed-hr", text: "Qualified/trained paramedical staff per scope & regulations" },
+        { id: "staff-records", text: "Personal records for all staff incl. contracts, quals, registrations" },
+        { id: "mbbs-req", text: "MBBS doctor during working hours (24×7 if IPD). Advanced: PG MBBS; specialists on call" },
+        { id: "nurse-exp", text: "Trained nurses (≥1 year experience): ≥1" },
+        { id: "pharmacist", text: "Pharmacist if in-house pharmacy" },
+        { id: "lab-tech", text: "Lab technician if in-house lab" },
+        { id: "xray-tech", text: "X‑ray technician if in-house X‑ray" },
+        { id: "mts", text: "Multi-task staff: minimum 1" },
+      ]},
+      { code: "M", title: "Support Services", items: [
+        { id: "reg-billing", text: "Registration/helpdesk & billing counter" },
+        { id: "diag", text: "Diagnostic services in-house or outsourced as per standards" },
+        { id: "pharmacy", text: "Pharmacy services in-house or outsourced" },
+      ]},
+      { code: "N", title: "Waste Management", items: [
+        { id: "general-waste", text: "General waste management as per local laws" },
+        { id: "bmw-rules", text: "Biomedical waste management as per BMW Rules" },
+      ]},
+      { code: "O", title: "Legal / Statutory", items: [
+        { id: "local-law", text: "Compliance with local regulations & law" },
+        { id: "ce-reg", text: "Clinical Establishments registration (if applicable)" },
+        { id: "pcb-bmw", text: "BMW authorization from PCB" },
+        { id: "other-lic", text: "Other mandatory licenses as per scope" },
+      ]},
+      { code: "P", title: "Records & Reporting", items: [
+        { id: "min-records", text: "Maintain minimum medical records per Annexure 4 & KCEA 2018" },
+        { id: "record-format", text: "Records maintained in physical or digital format" },
+        { id: "ipd-records", text: "IPD records per law, MCI guidelines & court orders" },
+      ]},
+    ];
 
-  // wire save (Firestore)
-  $("#btn-save").onclick = async () => {
-    const user = auth.currentUser;
-    const status = $("#save-status");
-    if(!user){ status.textContent="Sign in required."; return; }
-    try{
-      await db.collection("assessments").add({
-        owner: user.uid, ownerEmail: user.email, sections: state.sections, ts: new Date().toISOString()
-      });
-      status.textContent="Saved ✓"; setTimeout(()=>status.textContent="",2000);
-    }catch(e){ status.textContent="Save failed."; setTimeout(()=>status.textContent="",3000); }
-  };
+    const ANNEXURE_SECTIONS = [
+      { code: "Annx1", title: "Annexure 1 – Furniture & Fixtures", items: [
+        "Examination table","Writing tables","Chairs","Almirah","Waiting benches","Inpatient beds","Labour table (if applicable)","Wheelchair/Stretcher","Medicine & Instrument trolleys","Screens/curtains","Foot step","Bedside table","Baby cot (if applicable)","Stool","Medicine chest","Examination lamp","View box","Fans & lighting fixtures","Wash basin","IV stand","Color-coded BMW bins"
+      ].map((x,i)=>({id:`a1-${i}`,text:x})) },
+      { code: "Annx2", title: "Annexure 2 – Essential Equipment & Instruments", items: [
+        "Stethoscope","Digital thermometer","Torch","Digital sphygmomanometer","Weighing machine (adult/pediatric)","Glucometer","Pulse oximeter","Syringes & needles (various sizes)","Examination gloves","Examination table","Otoscope","Patellar hammer","Receptacle for soiled dressings","Sterile equipment storage","Sutures","Non‑mercury thermometer","Dressing trolley","IV stands","Medicine storage cabinet","Oxygen cylinder","Suction machine","Urinals & bedpans","Linens"
+      ].map((x,i)=>({id:`a2-${i}`,text:x})) },
+      { code: "Annx3", title: "Annexure 3 – Emergency Drugs & Consumables", items: [
+        "Inj. Diazepam","Inj. Furosemide","Inj. Ondansetron","Inj. Ranitidine","Inj. Noradrenaline","Inj. Phenytoin","Inj. Diclofenac","Inj. Deriphylline","Inj. Chlorpheniramine","Inj. Hydrocortisone","Inj. Atropine","Inj. Adrenaline","KCl","Sterile water","Sodium bicarbonate","Dopamine","Naloxone","Lignocaine (inj)","Tab. Sorbitrate","Tab. Aspirin","TT (inj)","Neb. Salbutamol","Neb. Budesonide","Lignocaine jelly 2%","Calcium (inj/tab)","RL 500 ml","NS 500/250/100 ml","DNS 500 ml","Dextrose 5% / 10% 500 ml","Pediatric IV infusion solution 500 ml"
+      ].map((x,i)=>({id:`a3-${i}`,text:x})) },
+      { code: "Annx4", title: "Annexure 4 – Minimum Contents of Medical Record", items: [
+        "Name & registration number of treating doctor","Patient name, demographics & contact number","Clinical history, assessments/reassessments, nursing notes, diagnosis","Investigation reports","Treatment details, procedures/surgery & care provided","Applicable consents","Discharge summary","Cause-of-death certificate & Death Summary (where applicable)"
+      ].map((x,i)=>({id:`a4-${i}`,text:x})) },
+    ];
 
-  // tabs
-  $$(".tab").forEach(b=> b.onclick = ()=>{
-    $$(".tab").forEach(x=>{ x.classList.remove("bg-sky-600","text-white"); x.classList.add("bg-slate-200","text-slate-800") });
-    b.classList.add("bg-sky-600","text-white");
-    $("#panel-checklist").classList.add("hidden"); $("#panel-annex13").classList.add("hidden"); $("#panel-annex4").classList.add("hidden"); $("#panel-noncomp").classList.add("hidden");
-    document.querySelector("#panel-"+b.dataset.tab).classList.remove("hidden");
-  });
+    // --------------------- Helpers ---------------------
+    async function isAllowlisted(email){
+      if (!email) return false;
+      const ref = db().doc(`allowlist/${String(email).trim().toLowerCase()}`);
+      const snap = await ref.get();
+      return snap.exists;
+    }
 
-  // show any runtime errors in UI
-  window.addEventListener('error', e => { err(e.message || 'Script error – see console'); });
+    function HeaderFields({ value, onChange }){
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <div>
+            <label className="block text-sm text-slate-600 mb-1">Hospital Name</label>
+            <input value={value.hospital||""} onChange={e=>onChange({...value,hospital:e.target.value})} className="w-full rounded-xl border px-3 py-2" placeholder="Hospital name" />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-600 mb-1">Address</label>
+            <input value={value.address||""} onChange={e=>onChange({...value,address:e.target.value})} className="w-full rounded-xl border px-3 py-2" placeholder="Address" />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-600 mb-1">Date(s) of Visit</label>
+            <input value={value.visitDates||""} onChange={e=>onChange({...value,visitDates:e.target.value})} className="w-full rounded-xl border px-3 py-2" placeholder="e.g., 15–16 Sep 2025" />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-600 mb-1">Assessor Name</label>
+            <input value={value.assessor||""} onChange={e=>onChange({...value,assessor:e.target.value})} className="w-full rounded-xl border px-3 py-2" placeholder="Assessor name" />
+          </div>
+        </div>
+      );
+    }
+
+    function SectionCard({ section, state, setState }){
+      return (
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="font-semibold text-slate-800">{section.title}</div>
+            <div className="text-xs text-slate-500">{section.items.length} items</div>
+          </div>
+          <div className="divide-y">
+            {section.items.map((it,idx)=>{
+              const key=`${section.code}-${it.id}`;
+              const row=state[key]||{v:"",note:""};
+              return (
+                <div key={key} className="p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
+                  <div className="md:col-span-7 text-slate-800"><span className="text-slate-400 mr-2">{idx+1}.</span>{it.text}</div>
+                  <div className="md:col-span-2">
+                    <select value={row.v} onChange={e=>setState(s=>({...s,[key]:{...s[key],v:e.target.value}}))} className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500">
+                      <option value="">Select</option>
+                      {YNN.map(x=>(<option key={x} value={x}>{x}</option>))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-3">
+                    <input value={row.note||""} onChange={e=>setState(s=>({...s,[key]:{...s[key],note:e.target.value}}))} placeholder="Notes / remarks" className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500"/>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    function MetaTable({ meta }){
+      return (
+        <table className="w-full text-sm border border-slate-300 mt-2">
+          <tbody>
+            <tr>
+              <td className="border border-slate-300 px-2 py-1 w-[18%] font-medium">Hospital</td>
+              <td className="border border-slate-300 px-2 py-1">{meta.hospital || ""}</td>
+            </tr>
+            <tr>
+              <td className="border border-slate-300 px-2 py-1 font-medium">Address</td>
+              <td className="border border-slate-300 px-2 py-1">{meta.address || ""}</td>
+            </tr>
+            <tr>
+              <td className="border border-slate-300 px-2 py-1 font-medium">Date(s) of Visit</td>
+              <td className="border border-slate-300 px-2 py-1">{meta.visitDates || ""}</td>
+            </tr>
+            <tr>
+              <td className="border border-slate-300 px-2 py-1 font-medium">Assessor</td>
+              <td className="border border-slate-300 px-2 py-1">{meta.assessor || ""}</td>
+            </tr>
+          </tbody>
+        </table>
+      );
+    }
+
+    function FooterStamp(){
+      return (
+        <div className="mt-6 text-xs text-slate-600">
+          <div>© Kerala State Council for Clinical Establishments (KSCCE). Designed by Nitin.</div>
+          <div className="text-slate-400">This printout was generated from the KSCCE checklist UI.</div>
+        </div>
+      );
+    }
+
+    function PrintSheets({ meta, answers }){
+      const fullRows = useMemo(()=>{
+        const rows=[];
+        for (const s of SECTIONS){
+          for (const it of s.items){
+            const key = `${s.code}-${it.id}`;
+            const ans = answers[key]?.v || "";
+            const note = answers[key]?.note || "";
+            rows.push({ section: `${s.code}. ${s.title}`, item: it.text, ans, note });
+          }
+        }
+        for (const a of ANNEXURE_SECTIONS){
+          for (const it of a.items){
+            const key = `${a.code}-${it.id}`;
+            const ans = answers[key]?.v || "";
+            const note = answers[key]?.note || "";
+            rows.push({ section: a.title, item: it.text, ans, note });
+          }
+        }
+        return rows;
+      },[answers]);
+
+      const nonRows = fullRows.filter(r => r.ans === "No");
+
+      return (
+        <>
+          <div id="sheet-full" className="p-6 text-slate-900">
+            <h1 className="text-xl font-semibold mb-1">KSCCE Hospital Checklist – Full Report</h1>
+            <MetaTable meta={meta} />
+            <table className="w-full text-sm border border-slate-300 mt-4">
+              <thead className="bg-slate-100">
+                <tr>
+                  <th className="border border-slate-300 px-2 py-1 text-left">Section</th>
+                  <th className="border border-slate-300 px-2 py-1 text-left">Item</th>
+                  <th className="border border-slate-300 px-2 py-1 text-left">Answer</th>
+                  <th className="border border-slate-300 px-2 py-1 text-left">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fullRows.map((r,i)=> (
+                  <tr key={i}>
+                    <td className="border border-slate-300 px-2 py-1 align-top w-[20%]">{r.section}</td>
+                    <td className="border border-slate-300 px-2 py-1 align-top">{r.item}</td>
+                    <td className="border border-slate-300 px-2 py-1 align-top w-[10%]">{r.ans}</td>
+                    <td className="border border-slate-300 px-2 py-1 align-top w-[30%]">{r.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <FooterStamp />
+          </div>
+
+          <div id="sheet-noncomp" className="p-6 text-slate-900">
+            <h1 className="text-xl font-semibold mb-1">KSCCE Hospital Checklist – Non‑Compliance Report</h1>
+            <MetaTable meta={meta} />
+            {nonRows.length === 0 ? (
+              <p className="mt-4">No items marked as "No".</p>
+            ) : (
+              <table className="w-full text-sm border border-slate-300 mt-4">
+                <thead className="bg-slate-100">
+                  <tr>
+                    <th className="border border-slate-300 px-2 py-1 text-left">Section</th>
+                    <th className="border border-slate-300 px-2 py-1 text-left">Item</th>
+                    <th className="border border-slate-300 px-2 py-1 text-left">Notes / Corrective Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {nonRows.map((r,i)=> (
+                    <tr key={i}>
+                      <td className="border border-slate-300 px-2 py-1 align-top w-[20%]">{r.section}</td>
+                      <td className="border border-slate-300 px-2 py-1 align-top">{r.item}</td>
+                      <td className="border border-slate-300 px-2 py-1 align-top w-[40%]">{r.note}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <FooterStamp />
+          </div>
+        </>
+      );
+    }
+
+    function AuthScreen(){
+      const [tab, setTab] = useState("login");
+      const [email, setEmail] = useState("");
+      const [password, setPassword] = useState("");
+      const [name, setName] = useState("");
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+
+      async function handleLogin(e){
+        e?.preventDefault(); setLoading(true); setError(null);
+        try {
+          const ok = await isAllowlisted(email);
+          if (!ok) throw new Error("This email is not allowlisted. Contact admin.");
+          await auth().signInWithEmailAndPassword(email, password);
+        } catch(err) { setError(err.message || String(err)); } finally { setLoading(false); }
+      }
+      async function handleSignup(e){
+        e?.preventDefault(); setLoading(true); setError(null);
+        try {
+          const ok = await isAllowlisted(email);
+          if (!ok) throw new Error("This email is not allowlisted. Contact admin.");
+          const cred = await auth().createUserWithEmailAndPassword(email, password);
+          if (name && cred.user) await cred.user.updateProfile({ displayName: name });
+        } catch(err) { setError(err.message || String(err)); } finally { setLoading(false); }
+      }
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-200 flex items-center justify-center p-4">
+          <div className="w-full max-w-md">
+            <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+              <div className="px-6 pt-6 pb-2">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-xl bg-teal-600 text-white grid place-items-center font-bold">KS</div>
+                  <div>
+                    <div className="font-semibold text-slate-900">KSCCE Hospital Checklist</div>
+                    <div className="text-xs text-slate-500 leading-tight">Assessor Portal</div>
+                  </div>
+                </div>
+                <div className="inline-flex rounded-lg bg-slate-100 p-1">
+                  <button onClick={()=>setTab("login")} className={`px-3 py-1.5 rounded-md text-sm ${tab==="login"?"bg-white shadow border border-slate-200":"text-slate-600"}`}>Login</button>
+                  <button onClick={()=>setTab("signup")} className={`px-3 py-1.5 rounded-md text-sm ${tab==="signup"?"bg-white shadow border border-slate-200":"text-slate-600"}`}>Create account</button>
+                </div>
+              </div>
+              <form onSubmit={tab==="login"?handleLogin:handleSignup} className="px-6 pb-6 space-y-4">
+                {tab==="signup" && (
+                  <div>
+                    <label className="block text-sm text-slate-600 mb-1">Full name</label>
+                    <input value={name} onChange={e=>setName(e.target.value)} className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="Your name"/>
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Email</label>
+                  <input type="email" value={email} onChange={e=>setEmail(e.target.value)} className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="you@example.com" required/>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Password</label>
+                  <input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="••••••••" minLength={6} required/>
+                </div>
+                {error && <div className="text-sm text-rose-600">{error}</div>}
+                <button type="submit" disabled={loading} className="w-full rounded-xl bg-teal-600 text-white py-2 font-medium shadow hover:bg-teal-700 disabled:opacity-60">
+                  {loading ? "Please wait…" : (tab==="login"?"Login":"Create account")}
+                </button>
+                <p className="text-[11px] text-slate-500 leading-tight">Access is restricted. Only emails present in the allowlist can log in or create accounts.</p>
+              </form>
+            </div>
+            <div className="text-center text-xs text-slate-500 mt-3">© Kerala State Council for Clinical Establishments (KSCCE). Designed by Nitin.</div>
+          </div>
+        </div>
+      );
+    }
+
+    function ChecklistApp({ userEmail, userId }){
+      const [tab,setTab]=useState("Checklist"); // Checklist | Annx1..4
+      const [meta,setMeta]=useState({ hospital: "", address: "", visitDates: "", assessor: "" });
+      const [answers,setAnswers]=useState({});
+      const [printMode,setPrintMode]=useState("none");
+      const printTimer=useRef(null);
+
+      const storageKey = `kscce-v1.1-${userId || "local"}`;
+      useEffect(()=>{ const raw=localStorage.getItem(storageKey); if(raw) try{const p=JSON.parse(raw); setMeta(p.meta||{}); setAnswers(p.answers||{});}catch{} },[]);
+      useEffect(()=>{ localStorage.setItem(storageKey,JSON.stringify({meta,answers})); },[meta,answers]);
+
+      const doPrint=(mode)=>{ setPrintMode(mode); clearTimeout(printTimer.current); printTimer.current=setTimeout(()=>{window.print(); setTimeout(()=>setPrintMode("none"),250)},50)};
+
+      const nonCompliances=useMemo(()=>{
+        const out=[];
+        for(const s of SECTIONS){
+          const entries = s.items
+            .filter(it => (answers[`${s.code}-${it.id}`]?.v) === "No")
+            .map(it => ({ label: `${s.code}. ${it.text}`, note: answers[`${s.code}-${it.id}`]?.note }));
+          if(entries.length) out.push({ title: s.title, entries });
+        }
+        for(const a of ANNEXURE_SECTIONS){
+          const entries = a.items
+            .filter(it => (answers[`${a.code}-${it.id}`]?.v) === "No")
+            .map(it => ({ label: `${a.title} – ${it.text}`, note: answers[`${a.code}-${it.id}`]?.note }));
+          if(entries.length) out.push({ title: a.title, entries });
+        }
+        return out;
+      },[answers]);
+
+      return (
+        <div className={`min-h-screen ${printMode!=="none"?(printMode==="full"?"print-full":"print-noncomp"):""}`}>
+          <header className="sticky top-0 z-20 bg-white/80 backdrop-blur border-b border-slate-200 print:hidden">
+            <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-teal-600 text-white grid place-items-center font-bold">KS</div>
+                <div>
+                  <div className="font-semibold text-slate-900">KSCCE Hospital Checklist</div>
+                  <div className="text-xs text-slate-500 leading-tight">Logged in as {userEmail}</div>
+                </div>
+              </div>
+              <div className="hidden md:flex items-center gap-2">
+                {["Checklist","Annx1","Annx2","Annx3","Annx4"].map(t => (
+                  <button key={t} onClick={()=>setTab(t)} className={`px-3 py-1.5 rounded-full text-sm border ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>{t}</button>
+                ))}
+                <button onClick={()=>auth().signOut()} className="ml-4 px-3 py-1.5 rounded-full text-sm border bg-white text-slate-700 hover:bg-slate-50">Sign out</button>
+              </div>
+            </div>
+          </header>
+
+          <main className="max-w-6xl mx-auto px-4 py-6">
+            <div className="md:hidden mb-4 print:hidden flex flex-wrap gap-2">
+              {["Checklist","Annx1","Annx2","Annx3","Annx4"].map(t => (
+                <button key={t} onClick={()=>setTab(t)} className={`px-3 py-1.5 rounded-full text-sm border ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>{t}</button>
+              ))}
+              <button onClick={()=>auth().signOut()} className="px-3 py-1.5 rounded-full text-sm border bg-white text-slate-700">Sign out</button>
+            </div>
+
+            <div className="space-y-6 print:hidden">
+              <HeaderFields value={meta} onChange={setMeta} />
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="ml-auto flex gap-2">
+                  <button onClick={()=>doPrint("full")} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm shadow hover:bg-black">Export Full Checklist (PDF)</button>
+                  <button onClick={()=>doPrint("noncomp")} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm shadow hover:bg-teal-700">Export Only Non‑Compliances (PDF)</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              {(tab==="Checklist"?SECTIONS:ANNEXURE_SECTIONS.filter(x=>x.code===tab)).map(s => (
+                <SectionCard key={s.code} section={s} state={answers} setState={setAnswers} />
+              ))}
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden">
+              <h3 className="font-semibold text-slate-900 mb-3">Non‑Compliance Summary (live)</h3>
+              {nonCompliances.length ? (
+                <div className="space-y-3">
+                  {nonCompliances.map((grp, i) => (
+                    <div key={i}>
+                      <div className="text-sm font-semibold text-slate-800 mb-1">{grp.title}</div>
+                      <ul className="list-disc pl-6 text-sm text-slate-700 space-y-1">
+                        {grp.entries.map((e, j) => (<li key={j}>{e.label}{e.note?` — ${e.note}`:""}</li>))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500">No items marked as <span className="font-medium text-slate-700">No</span>.</div>
+              )}
+            </div>
+          </main>
+
+          <footer className="text-xs text-center py-4 border-t print:hidden">© Kerala State Council for Clinical Establishments (KSCCE). Designed by Nitin.</footer>
+
+          {/* Print sheets mount */}
+          <div className={printMode!=="none"?(printMode==="full"?"print-full":"print-noncomp"):""}>
+            <PrintSheets meta={meta} answers={answers} />
+          </div>
+        </div>
+      );
+    }
+
+    function App(){
+      const [state, setState] = useState({ loading: true, user: null, allowed: false });
+      useEffect(()=>{
+        return auth().onAuthStateChanged(async (user) => {
+          if (!user) {
+            setState({ loading: false, user: null, allowed: false });
+          } else {
+            const ok = await isAllowlisted(user.email || "");
+            if (!ok) {
+              await auth().signOut();
+              setState({ loading: false, user: null, allowed: false });
+            } else {
+              setState({ loading: false, user, allowed: true });
+            }
+          }
+        });
+      },[]);
+
+      if (state.loading) return <div className="min-h-screen grid place-items-center bg-slate-50"><div className="text-slate-500">Loading…</div></div>;
+      if (!state.user || !state.allowed) return <AuthScreen />;
+      return <ChecklistApp userEmail={state.user.email} userId={state.user.uid} />;
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
   </script>
 </body>
 </html>
