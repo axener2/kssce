@@ -1,5 +1,4 @@
-# Write the corrected index.html to disk so the user can download it.
-html = r"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -600,7 +599,3 @@ html = r"""<!DOCTYPE html>
   </script>
 </body>
 </html>
-"""
-with open("/mnt/data/index.html", "w", encoding="utf-8") as f:
-    f.write(html)
-print("Wrote /mnt/data/index.html")
