@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KSCCE Hospital Checklist v1.6.3 — Login + Local Save (Reverted Base)</title>
+  <title>KSCCE Hospital Checklist v1.6.4 — Login + Local Save</title>
 
-  <!-- Tailwind CDN (ok for preview; compile for production) -->
+  <!-- Tailwind CDN (for preview; compile for production) -->
   <script src="https://cdn.tailwindcss.com"></script>
 
   <!-- React + ReactDOM UMD (React 18) -->
@@ -35,8 +35,6 @@
       body { background: #fff !important; }
     }
 
-    /* Section body spacing to avoid overlap with sticky header */
-    .section-body { padding-top: 1rem; }
     .sticky-shadow { box-shadow: 0 1px 0 0 rgba(2,6,23,0.06); }
   </style>
 </head>
@@ -51,7 +49,7 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
 
-    const PROJECT_VERSION = "v1.6.3-reverted-local";
+    const PROJECT_VERSION = "v1.6.4-local";
 
     // ---------------- Firebase (Compat) ----------------
     const FIREBASE_CONFIG = {
@@ -208,16 +206,16 @@
     ];
 
     const ANNEXURE_SECTIONS = [
-      { code: "Annx1", title: "Annexure 1 – Furniture & Fixtures", items: [
+      { code: "Annexure 1", title: "Annexure 1 – Furniture & Fixtures", items: [
         "Examination table","Writing tables","Chairs","Almirah","Waiting benches","Inpatient beds","Labour table (if applicable)","Wheelchair/Stretcher","Medicine & Instrument trolleys","Screens/curtains","Foot step","Bedside table","Baby cot (if applicable)","Stool","Medicine chest","Examination lamp","View box","Fans & lighting fixtures","Wash basin","IV stand","Color-coded BMW bins"
       ].map((x,i)=>({id:`a1-${i}`,text:x})) },
-      { code: "Annx2", title: "Annexure 2 – Essential Equipment & Instruments", items: [
+      { code: "Annexure 2", title: "Annexure 2 – Essential Equipment & Instruments", items: [
         "Stethoscope","Digital thermometer","Torch","Digital sphygmomanometer","Weighing machine (adult/pediatric)","Glucometer","Pulse oximeter","Syringes & needles (various sizes)","Examination gloves","Examination table","Otoscope","Patellar hammer","Receptacle for soiled dressings","Sterile equipment storage","Sutures","Non‑mercury thermometer","Dressing trolley","IV stands","Medicine storage cabinet","Oxygen cylinder","Suction machine","Urinals & bedpans","Linens"
       ].map((x,i)=>({id:`a2-${i}`,text:x})) },
-      { code: "Annx3", title: "Annexure 3 – Emergency Drugs & Consumables", items: [
+      { code: "Annexure 3", title: "Annexure 3 – Emergency Drugs & Consumables", items: [
         "Inj. Diazepam","Inj. Furosemide","Inj. Ondansetron","Inj. Ranitidine","Inj. Noradrenaline","Inj. Phenytoin","Inj. Diclofenac","Inj. Deriphylline","Inj. Chlorpheniramine","Inj. Hydrocortisone","Inj. Atropine","Inj. Adrenaline","KCl","Sterile water","Sodium bicarbonate","Dopamine","Naloxone","Lignocaine (inj)","Tab. Sorbitrate","Tab. Aspirin","TT (inj)","Neb. Salbutamol","Neb. Budesonide","Lignocaine jelly 2%","Calcium (inj/tab)","RL 500 ml","NS 500/250/100 ml","DNS 500 ml","Dextrose 5% / 10% 500 ml","Pediatric IV infusion solution 500 ml"
       ].map((x,i)=>({id:`a3-${i}`,text:x})) },
-      { code: "Annx4", title: "Annexure 4 – Minimum Contents of Medical Record", items: [
+      { code: "Annexure 4", title: "Annexure 4 – Minimum Contents of Medical Record", items: [
         "Name & registration number of treating doctor","Patient name, demographics & contact number","Clinical history, assessments/reassessments, nursing notes, diagnosis","Investigation reports","Treatment details, procedures/surgery & care provided","Applicable consents","Discharge summary","Cause-of-death certificate & Death Summary (where applicable)"
       ].map((x,i)=>({id:`a4-${i}`,text:x})) },
     ];
@@ -252,11 +250,11 @@
       const headRef = useRef(null);
       const bodyRef = useRef(null);
 
-      // Ensure comfortable spacing between sticky header and first row
+      // Polished spacing: minimal space above, comfy space below sticky header
       useEffect(()=>{
         function fixPad(){
           const headerHeight = (headRef.current?.offsetHeight || 0);
-          if (bodyRef.current) bodyRef.current.style.paddingTop = (headerHeight + 18) + "px";
+          if (bodyRef.current) bodyRef.current.style.paddingTop = (headerHeight + 12) + "px";
         }
         fixPad();
         const t1=setTimeout(fixPad,150), t2=setTimeout(fixPad,500);
@@ -268,12 +266,12 @@
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div
             ref={headRef}
-            className="px-4 py-3 bg-slate-50 border-b border-slate-200 sticky z-20 sticky-shadow"
+            className="px-4 py-2 bg-slate-50 border-b border-slate-200 sticky z-20 sticky-shadow"
             style={{ top: 'var(--sticky-offset)' }}
           >
             <div className="font-semibold text-slate-900 tracking-wide">{section.code}. {section.title}</div>
           </div>
-          <div ref={bodyRef} className="divide-y section-body">
+          <div ref={bodyRef} className="divide-y">
             {section.items.map((it,idx)=>{
               const key=`${section.code}-${it.id}`;
               const row=state[key]||{v:"",note:""};
@@ -415,6 +413,9 @@
       const [name, setName] = useState("");
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
+      const [resetOpen, setResetOpen] = useState(false);
+      const [resetEmail, setResetEmail] = useState("");
+      const [resetMsg, setResetMsg] = useState("");
 
       async function handleLogin(e){
         e?.preventDefault(); setLoading(true); setError(null);
@@ -430,6 +431,19 @@
           const cred=await auth().createUserWithEmailAndPassword(email, password);
           if(name&&cred.user) await cred.user.updateProfile({displayName:name});
         } catch(err){ setError(err.message||String(err)); } finally { setLoading(false); }
+      }
+
+      async function handleReset(e){
+        e?.preventDefault(); setResetMsg(""); setError(null);
+        try {
+          const mail = resetEmail || email;
+          if(!mail) throw new Error("Enter your email to reset password.");
+          if(!(await isAllowlisted(mail))) throw new Error("This email is not allowlisted.");
+          await auth().sendPasswordResetEmail(mail);
+          setResetMsg("Password reset email sent. Please check your inbox.");
+        } catch (err) {
+          setError(err.message || String(err));
+        }
       }
 
       return (
@@ -449,7 +463,7 @@
                   <button onClick={()=>setTab("signup")} className={`px-3 py-1.5 rounded-md text-sm ${tab==="signup"?"bg-white shadow border border-slate-200":"text-slate-600"}`}>Create account</button>
                 </div>
               </div>
-              <form onSubmit={tab==="login"?handleLogin:handleSignup} className="px-6 pb-6 space-y-4">
+              <form onSubmit={tab==="login"?handleLogin:handleSignup} className="px-6 pb-4 space-y-4">
                 {tab==="signup" && (
                   <div>
                     <label className="block text-sm text-slate-600 mb-1">Full name</label>
@@ -464,12 +478,25 @@
                   <label className="block text-sm text-slate-600 mb-1">Password</label>
                   <input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="••••••••" minLength={6} required/>
                 </div>
+
+                <div className="flex items-center justify-between">
+                  <button type="submit" disabled={loading} className="rounded-xl bg-teal-600 text-white px-4 py-2 font-medium shadow hover:bg-teal-700 disabled:opacity-60">
+                    {loading ? "Please wait…" : (tab==="login"?"Login":"Create account")}
+                  </button>
+                  <button type="button" onClick={()=>setResetOpen(v=>!v)} className="text-sm text-teal-700 hover:underline">Forgot password?</button>
+                </div>
+
                 {error && <div className="text-sm text-rose-600">{error}</div>}
-                <button type="submit" disabled={loading} className="w-full rounded-xl bg-teal-600 text-white py-2 font-medium shadow hover:bg-teal-700 disabled:opacity-60">
-                  {loading ? "Please wait…" : (tab==="login"?"Login":"Create account")}
-                </button>
-                <p className="text-[11px] text-slate-500 leading-tight">Access is restricted. Only emails present in the allowlist can log in or create accounts.</p>
+                {resetMsg && <div className="text-sm text-emerald-700">{resetMsg}</div>}
               </form>
+
+              {resetOpen && (
+                <form onSubmit={handleReset} className="px-6 pb-6 space-y-3">
+                  <div className="text-sm text-slate-700">Enter your registered email to receive a reset link.</div>
+                  <input type="email" value={resetEmail} onChange={e=>setResetEmail(e.target.value)} placeholder="you@example.com" className="w-full rounded-xl border px-3 py-2"/>
+                  <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2">Send reset email</button>
+                </form>
+              )}
             </div>
             <div className="text-center text-xs text-slate-500 mt-3">© Kerala State Council for Clinical Establishments (KSCCE). Designed by Nitin.</div>
           </div>
@@ -479,6 +506,7 @@
 
     // ---------------- Header + App ----------------
     function HeaderBar({ email, onTab, tab, onSignOut }){
+      const TABS = ["Checklist","Annexure 1","Annexure 2","Annexure 3","Annexure 4"];
       return (
         <header className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b border-slate-200">
           <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -490,7 +518,7 @@
               </div>
             </div>
             <div className="hidden md:flex items-center gap-2">
-              {["Checklist","Annx1","Annx2","Annx3","Annx4"].map(t => (
+              {TABS.map(t => (
                 <button key={t} onClick={()=>onTab(t)} className={`px-3 py-1.5 rounded-full text-sm border ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>
                   {t}
                 </button>
@@ -498,9 +526,9 @@
               <button onClick={onSignOut} className="ml-2 px-3 py-1.5 rounded-full text-sm border bg-white text-slate-700">Sign out</button>
             </div>
           </div>
-          <div className="md:hidden border-t border-slate-200 bg-white/80 backdrop-blur px-3 py-2">
+          <div className="md-hidden border-t border-slate-200 bg-white/80 backdrop-blur px-3 py-2 md:hidden">
             <div className="flex flex-wrap gap-2">
-              {["Checklist","Annx1","Annx2","Annx3","Annx4"].map(t => (
+              {["Checklist","Annexure 1","Annexure 2","Annexure 3","Annexure 4"].map(t => (
                 <button key={t} onClick={()=>onTab(t)} className={`px-3 py-1.5 rounded-full text-sm border ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>
                   {t}
                 </button>
@@ -526,7 +554,7 @@
       useEffect(()=>{
         function recalc(){
           const h = (document.querySelector('header')?.offsetHeight || 0);
-          document.documentElement.style.setProperty('--sticky-offset', (h + 14) + "px");
+          document.documentElement.style.setProperty('--sticky-offset', (h + 10) + "px");
         }
         recalc(); setTimeout(recalc, 160); setTimeout(recalc, 520);
         window.addEventListener('resize', recalc); window.addEventListener('load', recalc);
