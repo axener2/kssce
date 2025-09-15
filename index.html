@@ -22,7 +22,6 @@
     }
   </script>
   <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
-  <style>html:not(.auth-ready) body{visibility:hidden}</style>
   <!-- Firebase -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
@@ -41,7 +40,12 @@
     const db = getFirestore(app);
     setPersistence(auth, browserLocalPersistence);
     window.__APP__ = { app, auth, db };
-    window.addEventListener("DOMContentLoaded", () => document.documentElement.classList.add("auth-ready"));
+    window.addEventListener("DOMContentLoaded", () => {
+      document.documentElement.classList.add("auth-ready");
+      // Fail-safe: if Firebase init throws, at least show the auth panel
+      const panel = document.getElementById("auth-panel");
+      if(panel) panel.classList.remove("hidden");
+    });
   </script>
 
   <script type="module" src="./auth.js" defer></script>
@@ -53,6 +57,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.3/jspdf.plugin.autotable.min.js" defer></script>
 </head>
 <body class="bg-gradient-to-b from-sky-50 to-white text-slate-900">
+  <noscript>
+    <div style="padding:12px;margin:8px;background:#fee2e2;border:1px solid #fecaca;border-radius:12px;color:#991b1b;">This app requires JavaScript.</div>
+  </noscript>
   <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-200">
     <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
       <div class="flex items-center gap-3">
