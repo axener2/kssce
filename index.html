@@ -1,116 +1,77 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Clinical Establishments – Hospital Checklist (Kerala)</title>
-  <meta name="description" content="KSCCE Hospital Assessment – Firebase allow-listed sign-in, tabs for Annexures, PDF summary export." />
-  <link rel="stylesheet" href="./styles.css" />
-  <!-- Prevent FOUC until auth state is known -->
-  <style>
-    html:not(.auth-ready) body { visibility: hidden; }
-  </style>
-
-  <!-- Demo toggle (no Firebase required): add ?demo -->
-  <script>
-    window.DEMO_MODE = new URLSearchParams(location.search).has("demo");
-  </script>
-
-  <script type="module">
-    if(!window.DEMO_MODE){
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
-      import { getAuth, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
-      import { getFirestore } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
-      import firebaseConfig from "./firebase-config.js";
-
-      const app = initializeApp(firebaseConfig);
-      const auth = getAuth(app);
-      const db = getFirestore(app);
-      setPersistence(auth, browserLocalPersistence);
-
-      window.__APP__ = { app, auth, db };
-    } else {
-      window.__APP__ = { app: null, auth: null, db: null };
-    }
-
-    // Mark DOM ready for rendering (prevents flicker)
-    window.addEventListener("DOMContentLoaded", () => document.documentElement.classList.add("auth-ready"));
-  </script>
-
-  <script type="module" src="./auth.js" defer></script>
-  <script type="module" src="./data/schema.js" defer></script>
-  <script type="module" src="./app.js" defer></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>KSSCE Hospital Checklist</title>
+  <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
-  <header class="app-header">
-    <div class="brand">
-      <h1>Hospital Checklist (Kerala KSCCE)</h1>
-      <div class="subtitle">Secure • Mobile-friendly • PDF Export</div>
-    </div>
-    <div class="auth-area" id="auth-status"></div>
+  <header>
+    <h1>KSSCE Hospital Checklist</h1>
+    <div id="user-info"></div>
   </header>
 
-  <!-- Inline auth panel (no refresh) -->
-  <section id="auth-panel" class="auth-card">
-    <div class="auth-tabs">
-      <button class="auth-tab active" data-mode="login">Sign in</button>
-      <button class="auth-tab" data-mode="signup">Create account</button>
+  <main id="auth-container">
+    <div class="auth-card">
+      <h2>Sign in</h2>
+      <input id="email" type="email" placeholder="Email"/>
+      <input id="password" type="password" placeholder="Password"/>
+      <button id="signin">Sign in</button>
+      <button id="signup">Create account</button>
+      <button id="forgot">Forgot Password</button>
+      <p id="auth-msg"></p>
     </div>
-    <div class="auth-body">
-      <label>Email
-        <input type="email" id="auth-email" autocomplete="username" placeholder="you@org.in" />
-      </label>
-      <label>Password
-        <input type="password" id="auth-password" autocomplete="current-password" placeholder="••••••••" />
-      </label>
-      <button id="btn-auth" class="btn primary">Sign in</button>
-      <div class="muted small">Only allow-listed users can access. <a href="#" id="forgot-link">Forgot password?</a></div>
-      <div id="auth-error" class="error"></div>
-    </div>
-  </section>
-
-  <main id="app" class="hidden">
-    <section class="toolbar">
-      <div class="row">
-        <label>Hospital Name
-          <input type="text" id="hospital-name" placeholder="Enter hospital name" />
-        </label>
-        <label>Address
-          <input type="text" id="hospital-address" placeholder="Enter address" />
-        </label>
-        <label>Date(s) of Visit
-          <input type="date" id="visit-date" />
-        </label>
-      </div>
-      <div class="row">
-        <button id="btn-save" class="btn primary">Save</button>
-        <button id="btn-export-pdf" class="btn">Export Summary PDF</button>
-        <button id="btn-export-noncompliance" class="btn">Export Non-Compliance (CSV)</button>
-      </div>
-      <div id="save-status" class="muted"></div>
-    </section>
-
-    <nav class="tabs">
-      <button class="tab active" data-tab="checklist">Checklist</button>
-      <button class="tab" data-tab="annex-1-3">Annexures 1–3</button>
-      <button class="tab" data-tab="annex-4">Annexure 4</button>
-      <button class="tab" data-tab="noncompliance">Non-Compliance</button>
-    </nav>
-
-    <section id="tab-checklist" class="tab-panel active"></section>
-    <section id="tab-annex-1-3" class="tab-panel"></section>
-    <section id="tab-annex-4" class="tab-panel"></section>
-    <section id="tab-noncompliance" class="tab-panel">
-      <div id="noncompliance-list"></div>
-    </section>
   </main>
 
-  <footer class="app-footer">
-    <div>Built for KSCCE hospital assessments • PDF export & allow-listed access</div>
-  </footer>
+  <main id="app" class="hidden">
+    <nav>
+      <button class="tablink" data-tab="checklist">Checklist</button>
+      <button class="tablink" data-tab="annex1">Annex 1-3</button>
+      <button class="tablink" data-tab="annex4">Annex 4</button>
+      <button class="tablink" data-tab="noncompliance">Non-Compliance</button>
+      <button id="logout">Logout</button>
+    </nav>
 
-  <!-- jsPDF for PDF export -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.3/jspdf.plugin.autotable.min.js" defer></script>
+    <section id="checklist" class="tab"></section>
+    <section id="annex1" class="tab hidden"></section>
+    <section id="annex4" class="tab hidden"></section>
+    <section id="noncompliance" class="tab hidden"></section>
+
+    <div class="actions">
+      <button id="save">Save</button>
+      <button id="export-pdf">Export PDF</button>
+      <button id="export-csv">Export CSV</button>
+      <p id="save-status"></p>
+    </div>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword,
+             createUserWithEmailAndPassword, sendPasswordResetEmail, signOut } 
+             from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, doc, setDoc } 
+             from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDKSvo5KNuXPq83284_6GOnxXisKA_lSks",
+      authDomain: "kssce-51e3e.firebaseapp.com",
+      projectId: "kssce-51e3e",
+      storageBucket: "kssce-51e3e.firebasestorage.app",
+      messagingSenderId: "308291560377",
+      appId: "1:308291560377:web:ae634dd42e9ac1459e0c68"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    window.__APP__ = { app, auth, db };
+  </script>
+
+  <script type="module" src="auth.js"></script>
+  <script type="module" src="app.js"></script>
+  <script type="module" src="data/schema.js"></script>
 </body>
 </html>
