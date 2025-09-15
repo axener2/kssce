@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KSSCE Hospital Checklist</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+  <meta name="color-scheme" content="light only">
+</head>
+<body class="bg-gradient-to-b from-sky-50 to-white text-slate-900">
+  <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <h1 class="text-lg font-semibold tracking-tight">KSSCE Hospital Checklist</h1>
+      <div id="auth-status" class="text-sm"></div>
+    </div>
+  </header>
+
+  <!-- Auth Card -->
+  <section id="auth-panel" class="max-w-xl mx-auto px-4 mt-10">
+    <div class="bg-white rounded-2xl border border-slate-200 shadow">
+      <div class="p-6 sm:p-8">
+        <h2 class="text-2xl font-bold mb-1">Sign in</h2>
+        <p class="text-slate-500 text-sm mb-5">Only allow‑listed users can access.</p>
+
+        <div class="grid gap-3">
+          <input id="auth-email" type="email" inputmode="email" autocomplete="username"
+                 class="w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                 placeholder="you@org.in" />
+          <input id="auth-password" type="password" autocomplete="current-password"
+                 class="w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                 placeholder="Password" />
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
+            <button id="btn-login" class="rounded-xl bg-sky-500 text-white px-4 py-2 hover:bg-sky-600 transition">Sign in</button>
+            <button id="btn-signup" class="rounded-xl bg-slate-900 text-white px-4 py-2 hover:bg-black transition">Create account</button>
+            <button id="btn-forgot" class="rounded-xl bg-slate-100 text-slate-700 px-4 py-2 hover:bg-slate-200 transition">Forgot password</button>
+          </div>
+        </div>
+        <div id="auth-error" class="text-red-600 text-sm mt-3 min-h-6"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- App -->
+  <main id="app" class="hidden max-w-6xl mx-auto px-4 mt-6 space-y-4 pb-10">
+    <section class="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6">
+      <div class="grid gap-4 sm:grid-cols-3">
+        <label class="text-sm text-slate-600 grid gap-1">
+          Hospital Name
+          <input id="hospital-name" class="rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500" placeholder="Enter hospital name" />
+        </label>
+        <label class="text-sm text-slate-600 grid gap-1">
+          Address
+          <input id="hospital-address" class="rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500" placeholder="Enter address" />
+        </label>
+        <label class="text-sm text-slate-600 grid gap-1">
+          Date(s) of Visit
+          <input type="date" id="visit-date" class="rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500" />
+        </label>
+      </div>
+      <div class="flex flex-wrap gap-2 mt-4">
+        <button id="btn-save" class="rounded-xl bg-sky-500 text-white px-4 py-2 hover:bg-sky-600 transition">Save</button>
+        <button id="btn-export-pdf" class="rounded-xl bg-slate-900 text-white px-4 py-2 hover:bg-black transition">Export Summary PDF</button>
+        <button id="btn-export-noncompliance" class="rounded-xl bg-slate-100 text-slate-700 px-4 py-2 hover:bg-slate-200 transition">Export Non‑Compliance CSV</button>
+        <div id="save-status" class="text-sm text-slate-500 px-2 py-2"></div>
+      </div>
+    </section>
+
+    <nav class="flex flex-wrap gap-2">
+      <button class="tab active rounded-full bg-sky-500 text-white px-4 py-2" data-tab="checklist">Checklist</button>
+      <button class="tab rounded-full bg-slate-200 text-slate-800 px-4 py-2 hover:bg-slate-300" data-tab="annex-1-3">Annexures 1–3</button>
+      <button class="tab rounded-full bg-slate-200 text-slate-800 px-4 py-2 hover:bg-slate-300" data-tab="annex-4">Annexure 4</button>
+      <button class="tab rounded-full bg-slate-200 text-slate-800 px-4 py-2 hover:bg-slate-300" data-tab="noncompliance">Non‑Compliance</button>
+    </nav>
+
+    <section id="tab-checklist" class="tab-panel block"></section>
+    <section id="tab-annex-1-3" class="tab-panel hidden"></section>
+    <section id="tab-annex-4" class="tab-panel hidden"></section>
+    <section id="tab-noncompliance" class="tab-panel hidden">
+      <div id="noncompliance-list" class="space-y-2"></div>
+    </section>
+  </main>
+
+  <!-- Single script handles Firebase init + app + auth to avoid module order issues -->
+  <script type="module" src="./main.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.3/jspdf.plugin.autotable.min.js" defer></script>
+</body>
+</html>
