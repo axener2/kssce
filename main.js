@@ -15,8 +15,13 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-await setPersistence(auth, browserLocalPersistence);
+setPersistence(auth, browserLocalPersistence).catch(()=>{});
 
+
+window.addEventListener('error', (e)=>{
+  const box = document.getElementById('auth-error');
+  if(box){ box.textContent = 'Script error: ' + (e.message || 'see console'); box.classList.remove('text-emerald-600'); box.classList.add('text-red-600'); }
+});
 // Helpers
 const $ = s=>document.querySelector(s);
 const $$ = s=>Array.from(document.querySelectorAll(s));
