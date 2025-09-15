@@ -1,55 +1,86 @@
+import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
+import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 
-import { onAuthStateChanged, signInWithEmailAndPassword,
-         createUserWithEmailAndPassword, sendPasswordResetEmail, signOut }
-  from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
-import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
-
-const { auth, db } = window.__APP__;
-
-const emailEl = document.getElementById("email");
-const passEl = document.getElementById("password");
-const msgEl = document.getElementById("auth-msg");
-const signinBtn = document.getElementById("signin");
-const signupBtn = document.getElementById("signup");
-const forgotBtn = document.getElementById("forgot");
-const logoutBtn = document.getElementById("logout");
+const statusBar = document.getElementById("auth-status");
+const panel = document.getElementById("auth-panel");
+const btnLogin = document.getElementById("btn-login");
+const btnSignup = document.getElementById("btn-signup");
+const btnForgot = document.getElementById("btn-forgot");
+const authEmail = document.getElementById("auth-email");
+const authPassword = document.getElementById("auth-password");
+const authError = document.getElementById("auth-error");
 const appMain = document.getElementById("app");
-const authContainer = document.getElementById("auth-container");
 
-async function isAllowListed(email){
-  const ref = doc(db, "allowlist", email.toLowerCase());
-  const snap = await getDoc(ref);
-  return snap.exists();
+function showError(msg){ authError.textContent = msg; }
+function clearError(){ authError.textContent = ""; }
+function emailValid(v){ return !!v && v.includes("@"); }
+function passValid(v){ return (v||"").length >= 8; }
+
+function renderSignedIn(email){
+  statusBar.innerHTML = `<span class="inline-flex items-center gap-2 text-slate-700"><span class="h-2 w-2 rounded-full bg-emerald-500"></span>${email}</span> <button id="btn-logout" class="ml-2 text-brand hover:text-brand-dark">Sign out</button>`;
+  document.getElementById("btn-logout").addEventListener("click", async ()=>{
+    const { auth } = window.__APP__ || {};
+    await signOut(auth);
+  });
+  panel.classList.add("hidden");
+  appMain.classList.remove("hidden");
+}
+function renderSignedOut(){
+  statusBar.innerHTML = "";
+  panel.classList.remove("hidden");
+  appMain.classList.add("hidden");
 }
 
-signinBtn.addEventListener("click", async () => {
+const { auth } = window.__APP__ || {};
+
+// auth state
+onAuthStateChanged(auth, (user) => {
+  if (user) renderSignedIn((user.email||"").toLowerCase());
+  else renderSignedOut();
+});
+
+btnLogin.addEventListener("click", async ()=>{
+  clearError();
+  const email = (authEmail.value||"").trim().toLowerCase();
+  const pass = authPassword.value||"";
+  if(!emailValid(email)) return showError("Enter a valid email.");
+  if(!passValid(pass)) return showError("Password must be at least 8 characters.");
   try{
-    await signInWithEmailAndPassword(auth, emailEl.value, passEl.value);
-  }catch(e){ msgEl.textContent = e.message; }
+    await signInWithEmailAndPassword(auth, email, pass);
+  }catch(e){
+    showError("Invalid credentials.");
+  }
 });
 
-signupBtn.addEventListener("click", async () => {
+btnSignup.addEventListener("click", async ()=>{
+  clearError();
+  const email = (authEmail.value||"").trim().toLowerCase();
+  const pass = authPassword.value||"";
+  if(!emailValid(email)) return showError("Enter a valid email.");
+  if(!passValid(pass)) return showError("Password must be at least 8 characters.");
+
   try{
-    const email = emailEl.value;
-    const allowed = await isAllowListed(email);
-    if(!allowed){ msgEl.textContent="Email not in allowlist"; return; }
-    await createUserWithEmailAndPassword(auth, email, passEl.value);
-    msgEl.textContent="Account created";
-  }catch(e){ msgEl.textContent = e.message; }
+    const db = getFirestore();
+    const allowRef = doc(db, "allowlist", email);
+    const allowSnap = await getDoc(allowRef);
+    if(!allowSnap.exists()) return showError("This email is not on the allow‑list.");
+    await createUserWithEmailAndPassword(auth, email, pass);
+  }catch(e){
+    showError("Account creation failed.");
+  }
 });
 
-forgotBtn.addEventListener("click", async () => {
+btnForgot.addEventListener("click", async ()=>{
+  clearError();
+  const email = (authEmail.value||"").trim().toLowerCase();
+  if(!emailValid(email)) return showError("Enter your email first.");
   try{
-    await sendPasswordResetEmail(auth, emailEl.value);
-    msgEl.textContent="Reset email sent";
-  }catch(e){ msgEl.textContent = e.message; }
-});
-
-logoutBtn.addEventListener("click", async () => {
-  await signOut(auth);
-});
-
-onAuthStateChanged(auth, user => {
-  if(user){ authContainer.classList.add("hidden"); appMain.classList.remove("hidden"); }
-  else { authContainer.classList.remove("hidden"); appMain.classList.add("hidden"); }
+    await sendPasswordResetEmail(auth, email);
+    showError("Password reset email sent.");
+    authError.classList.remove("text-red-600");
+    authError.classList.add("text-emerald-600");
+    setTimeout(()=>{ authError.textContent=""; authError.classList.remove("text-emerald-600"); authError.classList.add("text-red-600"); }, 2500);
+  }catch(e){
+    showError("Could not send reset email.");
+  }
 });

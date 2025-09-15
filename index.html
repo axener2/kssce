@@ -1,60 +1,33 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>KSSCE Hospital Checklist</title>
-  <link rel="stylesheet" href="styles.css"/>
-</head>
-<body>
-  <header>
-    <h1>KSSCE Hospital Checklist</h1>
-    <div id="user-info"></div>
-  </header>
-
-  <main id="auth-container">
-    <div class="auth-card">
-      <h2>Sign in</h2>
-      <input id="email" type="email" placeholder="Email"/>
-      <input id="password" type="password" placeholder="Password"/>
-      <button id="signin">Sign in</button>
-      <button id="signup">Create account</button>
-      <button id="forgot">Forgot Password</button>
-      <p id="auth-msg"></p>
-    </div>
-  </main>
-
-  <main id="app" class="hidden">
-    <nav>
-      <button class="tablink" data-tab="checklist">Checklist</button>
-      <button class="tablink" data-tab="annex1">Annex 1-3</button>
-      <button class="tablink" data-tab="annex4">Annex 4</button>
-      <button class="tablink" data-tab="noncompliance">Non-Compliance</button>
-      <button id="logout">Logout</button>
-    </nav>
-
-    <section id="checklist" class="tab"></section>
-    <section id="annex1" class="tab hidden"></section>
-    <section id="annex4" class="tab hidden"></section>
-    <section id="noncompliance" class="tab hidden"></section>
-
-    <div class="actions">
-      <button id="save">Save</button>
-      <button id="export-pdf">Export PDF</button>
-      <button id="export-csv">Export CSV</button>
-      <p id="save-status"></p>
-    </div>
-  </main>
-
+  <meta name="description" content="KSCCE Hospital Assessment App – allow-listed Firebase sign-in, tabs for Annexures, PDF/CSV export." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { DEFAULT: '#0ea5e9', dark:'#0284c7' },
+            panel: '#0b1220'
+          },
+          boxShadow: {
+            card: '0 10px 30px rgba(2, 132, 199, .15)'
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+  <style>html:not(.auth-ready) body{visibility:hidden}</style>
+  <!-- Firebase -->
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
-    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-             createUserWithEmailAndPassword, sendPasswordResetEmail, signOut } 
-             from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
-    import { getFirestore, collection, addDoc, doc, setDoc } 
-             from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
-
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+    import { getAuth, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
+    import { getFirestore } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
     const firebaseConfig = {
       apiKey: "AIzaSyDKSvo5KNuXPq83284_6GOnxXisKA_lSks",
       authDomain: "kssce-51e3e.firebaseapp.com",
@@ -63,15 +36,104 @@
       messagingSenderId: "308291560377",
       appId: "1:308291560377:web:ae634dd42e9ac1459e0c68"
     };
-
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
+    setPersistence(auth, browserLocalPersistence);
     window.__APP__ = { app, auth, db };
+    window.addEventListener("DOMContentLoaded", () => document.documentElement.classList.add("auth-ready"));
   </script>
 
-  <script type="module" src="auth.js"></script>
-  <script type="module" src="app.js"></script>
-  <script type="module" src="data/schema.js"></script>
+  <script type="module" src="./auth.js" defer></script>
+  <script type="module" src="./data/schema.js" defer></script>
+  <script type="module" src="./app.js" defer></script>
+
+  <!-- jsPDF for PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.3/jspdf.plugin.autotable.min.js" defer></script>
+</head>
+<body class="bg-gradient-to-b from-sky-50 to-white text-slate-900">
+  <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="h-8 w-8 rounded-md bg-brand"></div>
+        <div>
+          <h1 class="text-lg font-semibold tracking-tight">KSSCE Hospital Checklist</h1>
+          <p class="text-xs text-slate-500">Secure • Mobile‑friendly • PDF/CSV Export</p>
+        </div>
+      </div>
+      <div id="auth-status" class="text-sm"></div>
+    </div>
+  </header>
+
+  <!-- Auth Card -->
+  <section id="auth-panel" class="max-w-xl mx-auto px-4 mt-10">
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-card">
+      <div class="p-6 sm:p-8">
+        <h2 class="text-2xl font-bold mb-1">Sign in</h2>
+        <p class="text-slate-500 text-sm mb-5">Only allow‑listed users can access.</p>
+
+        <div class="grid gap-3">
+          <input id="auth-email" type="email" inputmode="email" autocomplete="username"
+                 class="w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand"
+                 placeholder="you@org.in" />
+          <input id="auth-password" type="password" autocomplete="current-password"
+                 class="w-full rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand"
+                 placeholder="Password" />
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
+            <button id="btn-login" class="rounded-xl bg-brand text-white px-4 py-2 hover:bg-brand-dark transition">Sign in</button>
+            <button id="btn-signup" class="rounded-xl bg-slate-900 text-white px-4 py-2 hover:bg-black transition">Create account</button>
+            <button id="btn-forgot" class="rounded-xl bg-slate-100 text-slate-700 px-4 py-2 hover:bg-slate-200 transition">Forgot password</button>
+          </div>
+        </div>
+        <div id="auth-error" class="text-red-600 text-sm mt-3 min-h-6"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- App -->
+  <main id="app" class="hidden max-w-6xl mx-auto px-4 mt-6 space-y-4 pb-10">
+    <!-- Toolbar -->
+    <section class="bg-white rounded-2xl border border-slate-200 p-4 sm:p-6">
+      <div class="grid gap-4 sm:grid-cols-3">
+        <label class="text-sm text-slate-600 grid gap-1">
+          Hospital Name
+          <input id="hospital-name" class="rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="Enter hospital name" />
+        </label>
+        <label class="text-sm text-slate-600 grid gap-1">
+          Address
+          <input id="hospital-address" class="rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand" placeholder="Enter address" />
+        </label>
+        <label class="text-sm text-slate-600 grid gap-1">
+          Date(s) of Visit
+          <input type="date" id="visit-date" class="rounded-xl border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand" />
+        </label>
+      </div>
+      <div class="flex flex-wrap gap-2 mt-4">
+        <button id="btn-save" class="rounded-xl bg-brand text-white px-4 py-2 hover:bg-brand-dark transition">Save</button>
+        <button id="btn-export-pdf" class="rounded-xl bg-slate-900 text-white px-4 py-2 hover:bg-black transition">Export Summary PDF</button>
+        <button id="btn-export-noncompliance" class="rounded-xl bg-slate-100 text-slate-700 px-4 py-2 hover:bg-slate-200 transition">Export Non‑Compliance CSV</button>
+        <div id="save-status" class="text-sm text-slate-500 px-2 py-2"></div>
+      </div>
+    </section>
+
+    <!-- Tabs -->
+    <nav class="flex flex-wrap gap-2">
+      <button class="tab active rounded-full bg-brand text-white px-4 py-2" data-tab="checklist">Checklist</button>
+      <button class="tab rounded-full bg-slate-200 text-slate-800 px-4 py-2 hover:bg-slate-300" data-tab="annex-1-3">Annexures 1–3</button>
+      <button class="tab rounded-full bg-slate-200 text-slate-800 px-4 py-2 hover:bg-slate-300" data-tab="annex-4">Annexure 4</button>
+      <button class="tab rounded-full bg-slate-200 text-slate-800 px-4 py-2 hover:bg-slate-300" data-tab="noncompliance">Non‑Compliance</button>
+    </nav>
+
+    <!-- Panels -->
+    <section id="tab-checklist" class="tab-panel block"></section>
+    <section id="tab-annex-1-3" class="tab-panel hidden"></section>
+    <section id="tab-annex-4" class="tab-panel hidden"></section>
+    <section id="tab-noncompliance" class="tab-panel hidden">
+      <div id="noncompliance-list" class="space-y-2"></div>
+    </section>
+  </main>
+
+  <footer class="py-6 text-center text-xs text-slate-500">© KSSCE Hospital Checklist</footer>
 </body>
 </html>
