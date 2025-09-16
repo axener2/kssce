@@ -3,60 +3,53 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KSCCE Hospital Checklist v1.5</title>
-  <!-- Tailwind (CDN) -->
+  <title>KSCCE Hospital Checklist v1.4r — No‑Auth Safe Build</title>
+
+  <!-- Tailwind CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- React + ReactDOM UMD (v18) -->
+
+  <!-- React + ReactDOM UMD (React 18) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
   <!-- Babel for in-browser JSX -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Firebase Compat SDKs -->
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
   <style>
-    :root { --sticky-offset-mobile: 140px; --sticky-offset-sm: 96px; }
-    @media screen { #sheet-full, #sheet-noncomp { display:none !important; } }
+    :root { --sticky-offset: 120px; }
+
+    /* Screen vs Print isolation */
+    .screen-only { display: block; }
+    .print-only { display: none; }
+
     @media print {
-      header, .print\:hidden, .print-hidden { display:none !important; }
-      body { background:#fff; }
-      .print-full #sheet-full { display:block !important; }
-      .print-full #sheet-noncomp { display:none !important; }
-      .print-noncomp #sheet-full { display:none !important; }
-      .print-noncomp #sheet-noncomp { display:block !important; }
+      .screen-only { display: none !important; }
+      .print-only { display: none; }
+      body.print-full #sheet-full.print-only { display: block !important; }
+      body.print-noncomp #sheet-noncomp.print-only { display: block !important; }
+      body { background: #fff !important; }
     }
   </style>
 </head>
 <body class="bg-slate-100">
-  <div id="root"></div>
+  <!-- React root -->
+  <div id="root" class="screen-only"></div>
+
+  <!-- Print mounts live outside screen-only so they can render on print -->
+  <div id="print-mount">
+    <div id="sheet-full" class="print-only"></div>
+    <div id="sheet-noncomp" class="print-only"></div>
+  </div>
 
   <script type="text/babel">
-    // =============================
-    // KSCCE Hospital Checklist v1.5
-    // - Exports: Full = ONLY edited items (answer OR notes). Non‑compliance = ONLY "No" items
-    // - Cloud Save/Load + explicit "Save As (Local)" always-download button
-    // - "New assessment" button to clear current form
-    // - Sticky headers tuned to prevent overlap on small screens
-    // =============================
-
     const { useState, useEffect, useMemo, useRef } = React;
 
-    // --------------------- Firebase Init (Compat) ---------------------
-    const FIREBASE_CONFIG = {
-      apiKey: "AIzaSyDKSvo5KNuXPq83284_6GOnxXisKA_lSks",
-      authDomain: "kssce-51e3e.firebaseapp.com",
-      projectId: "kssce-51e3e",
-      storageBucket: "kssce-51e3e.appspot.com",
-      messagingSenderId: "308291560377",
-      appId: "1:308291560377:web:ae634dd42e9ac1459e0c68"
-    };
-    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
-    const auth = () => firebase.auth();
-    const db = () => firebase.firestore();
+    // ======== TOGGLE AUTH HERE ========
+    const AUTH_ENABLED = false; // set to true after you wire Firebase
+    // ==================================
 
-    // --------------------- Data Model ---------------------
-    const YNN = ["Yes","No","N/A"]; // dropdown options
+    // ---------------- Data ----------------
+    const YNN = ["Yes","No","N/A"];
 
     const SECTIONS = [
       { code: "A", title: "General", items: [
@@ -200,17 +193,8 @@
       ].map((x,i)=>({id:`a4-${i}`,text:x})) },
     ];
 
-    // --------------------- Helpers ---------------------
-    function nowStr(){return new Date().toLocaleString();}
-    const notEmpty = (v) => v != null && String(v).trim() !== "";
-
-    async function isAllowlisted(email){
-      if (!email) return false;
-      const emailLower = String(email).trim().toLowerCase();
-      const ref = db().doc(`allowlist/${emailLower}`);
-      const snap = await ref.get();
-      return snap.exists;
-    }
+    // ---------------- UI helpers ----------------
+    function nowStr(){ return new Date().toLocaleString(); }
 
     function HeaderFields({ value, onChange }){
       return (
@@ -236,14 +220,26 @@
     }
 
     function SectionCard({ section, state, setState }){
+      const headRef = useRef(null);
+      const bodyRef = useRef(null);
+
+      useEffect(()=>{
+        function fixPad(){
+          const h = (headRef.current?.offsetHeight || 0);
+          if (bodyRef.current) bodyRef.current.style.paddingTop = (h + 8) + "px";
+        }
+        fixPad();
+        const t1=setTimeout(fixPad,100), t2=setTimeout(fixPad,400);
+        window.addEventListener('resize', fixPad);
+        return ()=>{ clearTimeout(t1); clearTimeout(t2); window.removeEventListener('resize', fixPad); };
+      },[]);
+
       return (
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          {/* sticky offset tuned; add sufficient padding below */}
-          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between sticky" style={{top:'var(--sticky-offset-mobile)'}}>
-            <div className="font-semibold text-slate-800">{section.title}</div>
-            <div className="text-xs text-slate-500">{section.items.length} items</div>
+          <div ref={headRef} className="px-4 py-3 bg-slate-50 border-b border-slate-200 sticky z-20" style={{ top: 'var(--sticky-offset)' }}>
+            <div className="font-semibold text-slate-800">{section.code}. {section.title}</div>
           </div>
-          <div className="divide-y pt-5">{/* pt-5 avoids overlap under sticky header */}
+          <div ref={bodyRef} className="divide-y">
             {section.items.map((it,idx)=>{
               const key=`${section.code}-${it.id}`;
               const row=state[key]||{v:"",note:""};
@@ -251,13 +247,13 @@
                 <div key={key} className="p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
                   <div className="md:col-span-7 text-slate-800"><span className="text-slate-400 mr-2">{idx+1}.</span>{it.text}</div>
                   <div className="md:col-span-2">
-                    <select value={row.v} onChange={e=>setState(s=>({...s,[key]:{...s[key],v:e.target.value}}))} className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500">
+                    <select value={row.v} onChange={e=>setState(s=>({...s,[key]:{...s[key],v:e.target.value}}))} className="w-full rounded-xl border px-3 py-2">
                       <option value="">Select</option>
                       {YNN.map(x=>(<option key={x} value={x}>{x}</option>))}
                     </select>
                   </div>
                   <div className="md:col-span-3">
-                    <input value={row.note||""} onChange={e=>setState(s=>({...s,[key]:{...s[key],note:e.target.value}}))} placeholder="Notes / remarks" className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500"/>
+                    <input value={row.note||""} onChange={e=>setState(s=>({...s,[key]:{...s[key],note:e.target.value}}))} placeholder="Notes / remarks" className="w-full rounded-xl border px-3 py-2"/>
                   </div>
                 </div>
               )
@@ -301,405 +297,217 @@
       );
     }
 
-    function PrintSheets({ meta, answers, generatedAt }){
-      const editedRows = useMemo(()=>{
-        const rows=[];
-        const maybePush = (sectionTitle, itemText, ans, note) => {
-          if (notEmpty(ans) || notEmpty(note)) rows.push({ section: sectionTitle, item: itemText, ans: ans||"", note: note||"" });
-        };
-        for (const s of SECTIONS){
-          for (const it of s.items){
-            const key = `${s.code}-${it.id}`;
-            const ans = answers[key]?.v || "";
-            const note = answers[key]?.note || "";
-            maybePush(`${s.code}. ${s.title}`, it.text, ans, note);
-          }
-        }
-        for (const a of ANNEXURE_SECTIONS){
-          for (const it of a.items){
-            const key = `${a.code}-${it.id}`;
-            const ans = answers[key]?.v || "";
-            const note = answers[key]?.note || "";
-            maybePush(a.title, it.text, ans, note);
-          }
-        }
-        return rows;
-      },[answers]);
-
-      const nonRows = editedRows.filter(r => r.ans === "No");
-
+    // Print sheet components (rendered into #sheet-full / #sheet-noncomp)
+    function FullReport({ meta, answers }){
       return (
-        <>
-          <div id="sheet-full" className="p-6 text-slate-900">
-            <h1 className="text-xl font-semibold mb-1">KSCCE Hospital Checklist – Edited Items Report</h1>
-            <MetaTable meta={meta} />
-            {editedRows.length===0 ? (
-              <p className="mt-4">No items filled yet.</p>
-            ) : (
-            <table className="w-full text-sm border border-slate-300 mt-4">
-              <thead className="bg-slate-100">
-                <tr>
-                  <th className="border border-slate-300 px-2 py-1 text-left">Section</th>
-                  <th className="border border-slate-300 px-2 py-1 text-left">Item</th>
-                  <th className="border border-slate-300 px-2 py-1 text-left">Answer</th>
-                  <th className="border border-slate-300 px-2 py-1 text-left">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {editedRows.map((r,i)=> (
-                  <tr key={i}>
-                    <td className="border border-slate-300 px-2 py-1 align-top w-[20%]">{r.section}</td>
-                    <td className="border border-slate-300 px-2 py-1 align-top">{r.item}</td>
-                    <td className="border border-slate-300 px-2 py-1 align-top w-[10%]">{r.ans}</td>
-                    <td className="border border-slate-300 px-2 py-1 align-top w-[30%]">{r.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>)}
-            <FooterStamp when={generatedAt} />
-          </div>
-
-          <div id="sheet-noncomp" className="p-6 text-slate-900">
-            <h1 className="text-xl font-semibold mb-1">KSCCE Hospital Checklist – Non‑Compliance Report</h1>
-            <MetaTable meta={meta} />
-            {nonRows.length === 0 ? (
-              <p className="mt-4">No items marked as "No".</p>
-            ) : (
-              <table className="w-full text-sm border border-slate-300 mt-4">
+        <div className="p-6 text-slate-900">
+          <h1 className="text-xl font-semibold mb-1">KSCCE Hospital Checklist – Full Report</h1>
+          <MetaTable meta={meta} />
+          {[...SECTIONS, ...ANNEXURE_SECTIONS].map(s=> (
+            <div key={s.code} className="mt-4 break-inside-avoid">
+              <h2 className="font-semibold mb-2">{s.code}. {s.title}</h2>
+              <table className="w-full text-sm border border-slate-300">
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="border border-slate-300 px-2 py-1 text-left">Section</th>
                     <th className="border border-slate-300 px-2 py-1 text-left">Item</th>
-                    <th className="border border-slate-300 px-2 py-1 text-left">Notes / Corrective Action</th>
+                    <th className="border border-slate-300 px-2 py-1 text-left">Answer</th>
+                    <th className="border border-slate-300 px-2 py-1 text-left">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {nonRows.map((r,i)=> (
-                    <tr key={i}>
-                      <td className="border border-slate-300 px-2 py-1 align-top w-[20%]">{r.section}</td>
-                      <td className="border border-slate-300 px-2 py-1 align-top">{r.item}</td>
-                      <td className="border border-slate-300 px-2 py-1 align-top w-[40%]">{r.note}</td>
-                    </tr>
-                  ))}
+                  {s.items.map(it=>{
+                    const key=`${s.code}-${it.id}`;
+                    const row=answers[key]||{};
+                    return (
+                      <tr key={key}>
+                        <td className="border border-slate-300 px-2 py-1 align-top">{it.text}</td>
+                        <td className="border border-slate-300 px-2 py-1 align-top w-[12%]">{row.v||''}</td>
+                        <td className="border border-slate-300 px-2 py-1 align-top w-[35%]">{row.note||''}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-            )}
-            <FooterStamp when={generatedAt} />
-          </div>
-        </>
-      );
-    }
-
-    // --------------------- Screens ---------------------
-    function AuthScreen(){
-      const [tab, setTab] = useState("login");
-      const [email, setEmail] = useState("");
-      const [password, setPassword] = useState("");
-      const [name, setName] = useState("");
-      const [loading, setLoading] = useState(false);
-      const [error, setError] = useState(null);
-
-      async function handleLogin(e){
-        e?.preventDefault(); setLoading(true); setError(null);
-        try {
-          const ok = await isAllowlisted(email);
-          if (!ok) throw new Error("This email is not allowlisted. Contact admin.");
-          await auth().signInWithEmailAndPassword(email, password);
-        } catch(err) { setError(err.message || String(err)); } finally { setLoading(false); }
-      }
-      async function handleSignup(e){
-        e?.preventDefault(); setLoading(true); setError(null);
-        try {
-          const ok = await isAllowlisted(email);
-          if (!ok) throw new Error("This email is not allowlisted. Contact admin.");
-          const cred = await auth().createUserWithEmailAndPassword(email, password);
-          if (name && cred.user) await cred.user.updateProfile({ displayName: name });
-        } catch(err) { setError(err.message || String(err)); } finally { setLoading(false); }
-      }
-
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-200 flex items-center justify-center p-4">
-          <div className="w-full max-w-md">
-            <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-              <div className="px-6 pt-6 pb-2">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-teal-600 text-white grid place-items-center font-bold">KS</div>
-                  <div>
-                    <div className="font-semibold text-slate-900">KSCCE Hospital Checklist</div>
-                    <div className="text-xs text-slate-500 leading-tight">Assessor Portal</div>
-                  </div>
-                </div>
-                <div className="inline-flex rounded-lg bg-slate-100 p-1">
-                  <button onClick={()=>setTab("login")} className={`px-3 py-1.5 rounded-md text-sm ${tab==="login"?"bg-white shadow border border-slate-200":"text-slate-600"}`}>Login</button>
-                  <button onClick={()=>setTab("signup")} className={`px-3 py-1.5 rounded-md text-sm ${tab==="signup"?"bg-white shadow border border-slate-200":"text-slate-600"}`}>Create account</button>
-                </div>
-              </div>
-              <form onSubmit={tab==="login"?handleLogin:handleSignup} className="px-6 pb-6 space-y-4">
-                {tab==="signup" && (
-                  <div>
-                    <label className="block text-sm text-slate-600 mb-1">Full name</label>
-                    <input value={name} onChange={e=>setName(e.target.value)} className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="Your name"/>
-                  </div>
-                )}
-                <div>
-                  <label className="block text-sm text-slate-600 mb-1">Email</label>
-                  <input type="email" value={email} onChange={e=>setEmail(e.target.value)} className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="you@example.com" required/>
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-600 mb-1">Password</label>
-                  <input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500" placeholder="••••••••" minLength={6} required/>
-                </div>
-                {error && <div className="text-sm text-rose-600">{error}</div>}
-                <button type="submit" disabled={loading} className="w-full rounded-xl bg-teal-600 text-white py-2 font-medium shadow hover:bg-teal-700 disabled:opacity-60">
-                  {loading ? "Please wait…" : (tab==="login"?"Login":"Create account")}
-                </button>
-                <p className="text-[11px] text-slate-500 leading-tight">Access is restricted. Only emails present in the allowlist can log in or create accounts.</p>
-              </form>
             </div>
-            <div className="text-center text-xs text-slate-500 mt-3">© Kerala State Council for Clinical Establishments (KSCCE). Designed by Nitin.</div>
-          </div>
+          ))}
+          <FooterStamp when={nowStr()} />
         </div>
       );
     }
 
-    function ChecklistApp({ userEmail, userId }){
-      const [tab,setTab]=useState("Checklist"); // Checklist | Annx1..4
-      const [meta,setMeta]=useState({ hospital: "", address: "", visitDates: "", assessor: "" });
-      const [answers,setAnswers]=useState({});
-      const [printMode,setPrintMode]=useState("none");
-      const printTimer=useRef(null);
-
-      // Save/Load state
-      const [fileName,setFileName]=useState("");
-      const [loadOpen,setLoadOpen]=useState(false);
-      const [savedList,setSavedList]=useState([]);
-      const fileInputRef = useRef(null);
-      const [lastEdited,setLastEdited]=useState("");
-      const [lastSaved,setLastSaved]=useState("");
-
-      // tune sticky offset depending on header height
-      useEffect(()=>{
-        const header = document.querySelector('header');
-        if (header) {
-          const h = header.offsetHeight + 52; // include mobile tab row
-          document.documentElement.style.setProperty('--sticky-offset-mobile', (h+20)+"px");
+    function NonCompReport({ meta, answers }){
+      const rows = [];
+      for (const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){
+        for (const it of s.items){
+          const key=`${s.code}-${it.id}`;
+          const ans=answers[key]?.v||"";
+          if (ans === "No") rows.push({ section: s.code + ". " + s.title, item: it.text, note: answers[key]?.note||"" });
         }
-      },[]);
+      }
+      return (
+        <div className="p-6 text-slate-900">
+          <h1 className="text-xl font-semibold mb-1">KSCCE Hospital Checklist – Non‑Compliance Report</h1>
+          <MetaTable meta={meta} />
+          {rows.length ? (
+            <table className="w-full text-sm border border-slate-300 mt-3">
+              <thead className="bg-slate-100">
+                <tr>
+                  <th className="border border-slate-300 px-2 py-1 text-left">Section</th>
+                  <th className="border border-slate-300 px-2 py-1 text-left">Item</th>
+                  <th className="border border-slate-300 px-2 py-1 text-left">Notes / Corrective Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r,i)=> (
+                  <tr key={i}>
+                    <td className="border border-slate-300 px-2 py-1 align-top w-[22%]">{r.section}</td>
+                    <td className="border border-slate-300 px-2 py-1 align-top">{r.item}</td>
+                    <td className="border border-slate-300 px-2 py-1 align-top w-[40%]">{r.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (<p className="mt-3 text-sm">No items marked as "No".</p>)}
+          <FooterStamp when={nowStr()} />
+        </div>
+      );
+    }
 
-      const storageKey = `kscce-v1.5-${userId || "local"}`;
+    // ---------------- Screens ----------------
+    function Header({ email, onTab, tab }){
+      return (
+        <header className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b border-slate-200">
+          <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-teal-600 text-white grid place-items-center font-bold">KS</div>
+              <div>
+                <div className="font-semibold text-slate-900">KSCCE Hospital Checklist</div>
+                <div className="text-xs text-slate-500 leading-tight">{email ? `Logged in as ${email}` : "Preview (no login)"}</div>
+              </div>
+            </div>
+            <div className="hidden md:flex items-center gap-2">
+              {["Checklist","Annx1","Annx2","Annx3","Annx4"].map(t => (
+                <button key={t} onClick={()=>onTab(t)} className={`px-3 py-1.5 rounded-full text-sm border ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="md:hidden border-t border-slate-200 bg-white/80 backdrop-blur px-3 py-2">
+            <div className="flex flex-wrap gap-2">
+              {["Checklist","Annx1","Annx2","Annx3","Annx4"].map(t => (
+                <button key={t} onClick={()=>onTab(t)} className={`px-3 py-1.5 rounded-full text-sm border ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    function ChecklistApp({ email }){
+      const [meta,setMeta]=useState({hospital:"",address:"",visitDates:"",assessor:""});
+      const [answers,setAnswers]=useState({});
+      const [tab,setTab]=useState("Checklist");
+      const [lastEdited,setLastEdited]=useState("");
+
+      const storageKey = `kscce-v1.4r-${email||"local"}`;
       useEffect(()=>{ const raw=localStorage.getItem(storageKey); if(raw) try{const p=JSON.parse(raw); setMeta(p.meta||{}); setAnswers(p.answers||{});}catch{} },[]);
       useEffect(()=>{ localStorage.setItem(storageKey,JSON.stringify({meta,answers})); setLastEdited(nowStr()); },[meta,answers]);
 
-      const doPrint=(mode)=>{ setPrintMode(mode); clearTimeout(printTimer.current); printTimer.current=setTimeout(()=>{window.print(); setTimeout(()=>setPrintMode("none"),250)},50)};
+      // Global sticky offset
+      useEffect(()=>{
+        function recalc(){
+          const h = (document.querySelector('header')?.offsetHeight || 0);
+          document.documentElement.style.setProperty('--sticky-offset', (h + 12) + "px");
+        }
+        recalc(); setTimeout(recalc, 150); setTimeout(recalc, 500);
+        window.addEventListener('resize', recalc); window.addEventListener('load', recalc);
+        return ()=>{ window.removeEventListener('resize', recalc); window.removeEventListener('load', recalc); };
+      },[]);
 
-      const nonCompliances=useMemo(()=>{
-        const out=[];
-        for(const s of SECTIONS){
-          const entries = s.items
-            .filter(it => (answers[`${s.code}-${it.id}`]?.v) === "No")
-            .map(it => ({ label: `${s.code}. ${it.text}`, note: answers[`${s.code}-${it.id}`]?.note }));
-          if(entries.length) out.push({ title: s.title, entries });
-        }
-        for(const a of ANNEXURE_SECTIONS){
-          const entries = a.items
-            .filter(it => (answers[`${a.code}-${it.id}`]?.v) === "No")
-            .map(it => ({ label: `${a.title} – ${it.text}`, note: answers[`${a.code}-${it.id}`]?.note }));
-          if(entries.length) out.push({ title: a.title, entries });
-        }
-        return out;
+      function saveLocal(){
+        const data = JSON.stringify({meta,answers},null,2);
+        const blob = new Blob([data],{type:'application/json'});
+        const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`${meta.hospital||'Hospital'}-${new Date().toISOString().slice(0,10)}.json`.replace(/\s+/g,'_');
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 500);
+      }
+      function loadLocal(e){ const file=e.target.files?.[0]; if(!file) return; const r=new FileReader(); r.onload=()=>{ try{ const j=JSON.parse(r.result); setMeta(j.meta||{}); setAnswers(j.answers||{}); }catch{ alert('Invalid JSON'); } }; r.readAsText(file); e.target.value=''; }
+      function newAssessment(){ if(confirm('Start a new assessment?')){ setMeta({hospital:'',address:'',visitDates:'',assessor:''}); setAnswers({}); } }
+
+      const nonCompliances = useMemo(()=>{
+        const out=[]; for(const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){ for(const it of s.items){ const k=`${s.code}-${it.id}`; if(answers[k]?.v==="No") out.push({section:s.code + ". " + s.title,item:it.text,note:answers[k]?.note||''}); } } return out;
       },[answers]);
 
-      // ---------- Cloud Save / Load (per-user) with graceful fallback ----------
-      async function listFiles(){
-        try{
-          const snap = await db().collection("userData").doc(userId).collection("checklists").orderBy("updatedAt","desc").get();
-          setSavedList(snap.docs.map(d=>({id:d.id, ...d.data()})));
-        }catch(e){
-          console.warn("listFiles failed:",e);
-          setSavedList([]);
-          alert("Cloud list failed (permissions). You can still use Load from File…");
-        }
-      }
-      async function saveToFirestore(name){
-        try{
-          const ref = db().collection("userData").doc(userId).collection("checklists");
-          await ref.add({ name: name||fileName||new Date().toLocaleString(), meta, answers, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
-          setFileName(name||fileName);
-          setLastSaved(nowStr());
-          alert("Saved to cloud");
-        }catch(e){
-          console.warn("save failed:", e);
-          alert("Cloud save failed (permissions). A local download will start instead.");
-          saveBlob(name);
-        }
-      }
-      function openLoad(){ setLoadOpen(true); listFiles(); }
-      async function loadFile(id){
-        try{
-          const docRef = db().collection("userData").doc(userId).collection("checklists").doc(id);
-          const snap = await docRef.get();
-          if(snap.exists){ const d=snap.data(); setMeta(d.meta||{}); setAnswers(d.answers||{}); setFileName(d.name||""); setLoadOpen(false); }
-        }catch(e){ alert("Cloud load failed (permissions). Use Load from File…"); }
-      }
+      const fullRootRef = useRef(null);
+      const nonRootRef  = useRef(null);
+      useEffect(()=>{
+        fullRootRef.current = ReactDOM.createRoot(document.getElementById('sheet-full'));
+        nonRootRef.current  = ReactDOM.createRoot(document.getElementById('sheet-noncomp'));
+        return ()=>{ try{ fullRootRef.current?.unmount(); }catch{} try{ nonRootRef.current?.unmount(); }catch{} };
+      },[]);
 
-      // ---------- Local file Save/Load helpers ----------
-      function saveBlob(suggested){
-        const data = JSON.stringify({meta,answers}, null, 2);
-        const blob = new Blob([data], {type:'application/json'});
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = (suggested || fileName || `${meta.hospital||'Hospital'}-${new Date().toISOString().slice(0,10)}`).replace(/\s+/g,'_') + '.json';
-        document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-        setLastSaved(nowStr());
+      function printFull(){
+        fullRootRef.current.render(<FullReport meta={meta} answers={answers} />);
+        document.body.classList.add('print-full');
+        setTimeout(()=>{ window.print(); setTimeout(()=>{ document.body.classList.remove('print-full'); fullRootRef.current.render(null); }, 200); }, 50);
       }
-      function handleSaveLocalAs(){ const n = prompt('Local file name (without .json):', fileName || `${meta.hospital||'Hospital'}-${new Date().toLocaleString()}`); if(n){ setFileName(n); saveBlob(n);} }
-      function handleSaveCloud(){ if(!userId){ alert('Not logged in'); return;} saveToFirestore(fileName); }
-      function triggerLoad(){ fileInputRef.current?.click(); }
-      function onFileChosen(e){ const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{ try{ const json=JSON.parse(reader.result); setMeta(json.meta||{}); setAnswers(json.answers||{}); setFileName(file.name.replace(/\.json$/i,'')); }catch{ alert('Invalid file'); } }; reader.readAsText(file); e.target.value=''; }
-
-      function newAssessment(){ if(confirm('Start a new assessment? Current unsaved data will remain in your last local autosave.')){ setMeta({ hospital:"", address:"", visitDates:"", assessor:"" }); setAnswers({}); setFileName(""); } }
+      function printNonComp(){
+        nonRootRef.current.render(<NonCompReport meta={meta} answers={answers} />);
+        document.body.classList.add('print-noncomp');
+        setTimeout(()=>{ window.print(); setTimeout(()=>{ document.body.classList.remove('print-noncomp'); nonRootRef.current.render(null); }, 200); }, 50);
+      }
 
       return (
-        <div className={`min-h-screen ${printMode!=="none"?(printMode==="full"?"print-full":"print-noncomp"):""}`}>
-          <header className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b border-slate-200 print:hidden">
-            <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-teal-600 text-white grid place-items-center font-bold">KS</div>
-                <div>
-                  <div className="font-semibold text-slate-900">KSCCE Hospital Checklist</div>
-                  <div className="text-xs text-slate-500 leading-tight">Logged in as {userEmail}</div>
-                </div>
-              </div>
-              <div className="hidden md:flex items-center gap-2">
-                {["Checklist","Annx1","Annx2","Annx3","Annx4"].map(t => (
-                  <button key={t} onClick={()=>setTab(t)} className={`px-3 py-1.5 rounded-full text-sm border ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>{t}</button>
-                ))}
-                <button onClick={()=>auth().signOut()} className="ml-4 px-3 py-1.5 rounded-full text-sm border bg-white text-slate-700 hover:bg-slate-50">Sign out</button>
-              </div>
-            </div>
-            <div className="md:hidden border-t border-slate-200 bg-white/80 backdrop-blur px-3 py-2 sticky top-[52px] z-20">
-              <div className="flex flex-wrap gap-2">
-                {["Checklist","Annx1","Annx2","Annx3","Annx4"].map(t => (
-                  <button key={t} onClick={()=>setTab(t)} className={`px-3 py-1.5 rounded-full text-sm border ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>{t}</button>
-                ))}
-                <button onClick={()=>auth().signOut()} className="px-3 py-1.5 rounded-full text-sm border bg-white text-slate-700">Sign out</button>
-              </div>
-            </div>
-          </header>
+        <>
+          <Header email={email} onTab={setTab} tab={tab} />
 
           <main className="max-w-6xl mx-auto px-4 py-6">
-            {/* Toolbar ABOVE meta fields */}
-            <div className="mb-4">
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-sm px-4 py-3 flex flex-wrap gap-2 items-center">
-                <button onClick={()=>doPrint("full")} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm shadow hover:bg-black">Export Edited Items (PDF)</button>
-                <button onClick={()=>doPrint("noncomp")} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm shadow hover:bg-teal-700">Export Non‑Compliances (PDF)</button>
-                <span className="h-6 w-px bg-slate-200 mx-1"></span>
-                <button onClick={handleSaveCloud} className="px-4 py-2 rounded-xl bg-white border text-slate-800 text-sm hover:bg-slate-50">Save to Cloud</button>
-                <button onClick={handleSaveLocalAs} className="px-4 py-2 rounded-xl bg-white border text-slate-800 text-sm hover:bg-slate-50">Save As (Local)…</button>
-                <button onClick={()=>setLoadOpen(true)} className="px-4 py-2 rounded-xl bg-white border text-slate-800 text-sm hover:bg-slate-50">Load (Cloud)</button>
-                <button onClick={triggerLoad} className="px-4 py-2 rounded-xl bg-white border text-slate-800 text-sm hover:bg-slate-50">Load from File…</button>
-                <button onClick={newAssessment} className="px-4 py-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm hover:bg-rose-100">New assessment</button>
-                <div className="ml-auto text-xs text-slate-500">
-                  <div>Last edited: <span className="font-medium text-slate-700">{lastEdited || '-'}</span></div>
-                  <div>Last saved: <span className="font-medium text-slate-700">{lastSaved || '-'}</span></div>
-                </div>
-              </div>
+            <div className="mb-4 bg-white border border-slate-200 rounded-2xl shadow-sm px-4 py-3 flex flex-wrap gap-2 items-center">
+              <button onClick={printFull} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm shadow">Export Edited Items (PDF)</button>
+              <button onClick={printNonComp} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm shadow">Export Non‑Compliances (PDF)</button>
+              <span className="h-6 w-px bg-slate-200 mx-1"></span>
+              <button onClick={saveLocal} className="px-4 py-2 rounded-xl bg-white border text-slate-800 text-sm">Save As (Local)</button>
+              <label className="px-4 py-2 rounded-xl bg-white border text-slate-800 text-sm cursor-pointer">
+                Load from File…
+                <input type="file" accept="application/json" onChange={loadLocal} className="hidden" />
+              </label>
+              <button onClick={newAssessment} className="px-4 py-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm">New assessment</button>
+              <div className="ml-auto text-xs text-slate-500">Last edited: <span className="font-medium text-slate-700">{lastEdited||'-'}</span></div>
             </div>
 
-            {/* Meta fields */}
-            <div className="space-y-6 print:hidden">
-              <HeaderFields value={meta} onChange={setMeta} />
-            </div>
+            <HeaderFields value={meta} onChange={setMeta} />
 
-            <div className="space-y-6">
+            <div className="space-y-6 mt-6">
               {(tab==="Checklist"?SECTIONS:ANNEXURE_SECTIONS.filter(x=>x.code===tab)).map(s => (
                 <SectionCard key={s.code} section={s} state={answers} setState={setAnswers} />
               ))}
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden mt-6">
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm mt-6">
               <h3 className="font-semibold text-slate-900 mb-3">Non‑Compliance Summary (live)</h3>
               {nonCompliances.length ? (
-                <div className="space-y-3">
-                  {nonCompliances.map((grp, i) => (
-                    <div key={i}>
-                      <div className="text-sm font-semibold text-slate-800 mb-1">{grp.title}</div>
-                      <ul className="list-disc pl-6 text-sm text-slate-700 space-y-1">
-                        {grp.entries.map((e, j) => (<li key={j}>{e.label}{e.note?` — ${e.note}`:""}</li>))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
+                <ul className="list-disc pl-6 text-sm text-slate-700 space-y-1">
+                  {nonCompliances.map((r,i)=>(<li key={i}>{r.section}: {r.item}{r.note?` — ${r.note}`:""}</li>))}
+                </ul>
               ) : (
                 <div className="text-sm text-slate-500">No items marked as <span className="font-medium text-slate-700">No</span>.</div>
               )}
             </div>
-
-            <input ref={fileInputRef} type="file" accept="application/json" onChange={onFileChosen} className="hidden" />
           </main>
 
-          {/* Load dialog */}
-          {loadOpen && (
-            <div className="fixed inset-0 bg-black/40 grid place-items-center p-4 z-50">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="font-semibold">Load Saved Checklist</div>
-                  <button onClick={()=>setLoadOpen(false)} className="text-slate-500 hover:text-slate-800">✕</button>
-                </div>
-                <div className="max-h-80 overflow-auto divide-y">
-                  {savedList.length? savedList.map((f)=> (
-                    <div key={f.id} className="py-2 flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-medium">{f.name||"(untitled)"}</div>
-                        <div className="text-xs text-slate-500">{f.updatedAt?.toDate? f.updatedAt.toDate().toLocaleString(): ""}</div>
-                      </div>
-                      <button onClick={()=>loadFile(f.id)} className="px-2.5 py-1.5 text-sm rounded-lg border bg-white hover:bg-slate-50">Load</button>
-                    </div>
-                  )): (
-                    <div className="text-sm text-slate-500 py-6">
-                      No cloud saves found. Check Firestore rules (userData/{uid}/checklists) or use "Load from File…".
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <footer className="text-xs text-center py-4 border-t print:hidden">© Kerala State Council for Clinical Establishments (KSCCE). Designed by Nitin.</footer>
-
-          {/* Print sheets mount */}
-          <div className={printMode!=="none"?(printMode==="full"?"print-full":"print-noncomp"):""}>
-            <PrintSheets meta={meta} answers={answers} generatedAt={nowStr()} />
-          </div>
-        </div>
+          <footer className="text-xs text-center py-4 border-t">© Kerala State Council for Clinical Establishments (KSCCE). Designed by Nitin.</footer>
+        </>
       );
     }
 
     function App(){
-      const [state, setState] = useState({ loading: true, user: null, allowed: false });
-      useEffect(()=>{
-        return auth().onAuthStateChanged(async (user) => {
-          if (!user) {
-            setState({ loading: false, user: null, allowed: false });
-          } else {
-            const ok = await isAllowlisted(user.email || "");
-            if (!ok) {
-              await auth().signOut();
-              setState({ loading: false, user: null, allowed: false });
-            } else {
-              setState({ loading: false, user, allowed: true });
-            }
-          }
-        });
-      },[]);
-
-      if (state.loading) return <div className="min-h-screen grid place-items-center bg-slate-50"><div className="text-slate-500">Loading…</div></div>;
-      if (!state.user || !state.allowed) return <AuthScreen />;
-      return <ChecklistApp userEmail={state.user.email} userId={state.user.uid} />;
+      // No-auth safe build: render app immediately
+      return <ChecklistApp email={null} />;
     }
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
   </script>
 </body>
 </html>
