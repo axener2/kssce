@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KSCCE Hospital Checklist v1.6.6 — Login + Local Save</title>
+  <title>KSCCE Hospital Checklist v2.1 — Login + Local Save</title>
 
   <!-- Tailwind CDN (for preview; compile for production) -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -35,14 +35,14 @@
   <!-- React root (screen-only so UI never prints) -->
   <div id="root" class="screen-only"></div>
 
-  <!-- Dedicated print mounts (for extracting HTML, not for direct print) -->
+  <!-- Dedicated print mounts (offscreen builders) -->
   <div id="sheet-full" class="print-only"></div>
   <div id="sheet-noncomp" class="print-only"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
 
-    const PROJECT_VERSION = "v1.6.6-local";
+    const PROJECT_VERSION = "v2.1-local";
 
     // ---------------- Firebase (Compat) ----------------
     const FIREBASE_CONFIG = {
@@ -68,133 +68,137 @@
       }
     }
 
-    // ---------------- Data ----------------
+    // ---------------- Helpers ----------------
+    function nowStr(){ return new Date().toLocaleString(); }
+
+    // ---------------- Verbatim KSCCE Checklist Data ----------------
+    // NOTE: Replace item texts below with the exact wording from the official PDF where needed.
     const YNN = ["Yes","No","N/A"];
 
     const SECTIONS = [
       { code: "A", title: "General", items: [
-        { id: "ic-measures", text: "Hospital adopts infection control measures" },
-        { id: "bmw", text: "Appropriate biomedical waste management in place" },
-        { id: "med-records", text: "Medical records maintained (hard/soft copy)" },
-        { id: "lab-services", text: "Laboratory services available (in-house/collection) with reporting" },
-        { id: "birth-death", text: "Birth & death information register maintained" },
-        { id: "power-backup", text: "Power backup covers essential activities" },
-        { id: "fire-ext", text: "Fire extinguishers available" },
-        { id: "linen", text: "Facility for clean/sterilized linens available" },
-        { id: "ambulance", text: "Ambulance service arrangement in place" },
-        { id: "display-services", text: "Display of services, rates & packages" },
-        { id: "charges-info", text: "Information on approximate charges provided" }
+        { id: "ic-measures", text: "Hospital should adopt infection control measures." },
+        { id: "bmw", text: "Appropriate arrangements for Bio-Medical Waste (BMW) management should be in place." },
+        { id: "med-records", text: "Medical Records should be maintained by either in hard or soft copy." },
+        { id: "lab-services", text: "Laboratory services should be available (in-house/collection centre), and reports should be provided to patients." },
+        { id: "birth-death", text: "Birth and death information should be recorded/maintained as per norms." },
+        { id: "power-backup", text: "Adequate power backup should be available for essential activities." },
+        { id: "fire-ext", text: "Fire extinguishers should be available as per requirement." },
+        { id: "linen", text: "Facility for clean/sterilized linens should be available." },
+        { id: "ambulance", text: "Ambulance service arrangement should be available." },
+        { id: "display-services", text: "Display of hospital services, rates and packages should be available." },
+        { id: "charges-info", text: "Patients should be informed of approximate charges of care/services." }
       ]},
       { code: "B", title: "OPD", items: [
-        { id: "opd-basics", text: "Stethoscope, torch, thermometer (non‑mercury), BP apparatus (non‑mercury), handwash, exam table, chairs/stools" },
-        { id: "female-attendant", text: "Female attendant for female patients; privacy & patient information material" },
-        { id: "registration", text: "Patient registration with name, age, sex, contact (mobile) in hard/soft copy" },
-        { id: "waiting-amenities", text: "Waiting area, drinking water, separate male/female toilets" },
-        { id: "doc-display", text: "Names & qualifications of doctors displayed" }
+        { id: "opd-basics", text: "OPD should have stethoscope, torch, thermometer (non-mercury), BP apparatus (non-mercury), handwashing facility, examination table, chairs or stools." },
+        { id: "female-attendant", text: "Female attendant for female patients should be available; privacy and patient information material should be provided." },
+        { id: "registration", text: "Patient registration should include name, age, sex and contact (mobile) recorded in hard or soft copy." },
+        { id: "waiting-amenities", text: "Waiting area with drinking water facility and separate male/female toilets should be available." },
+        { id: "doc-display", text: "Names and qualifications of doctors should be displayed." }
       ]},
       { code: "C", title: "Casualty / Emergency", items: [
-        { id: "cas-hr", text: "Adequate human resources during working hours" },
-        { id: "cas-drugs-eq", text: "Emergency drugs & equipment as per scope available" },
-        { id: "cas-signage", text: "Casualty signage visible at entrance" },
-        { id: "ramp", text: "Patient‑friendly ramp/slope available" },
-        { id: "stretchers", text: "Stretchers/wheelchairs available" }
+        { id: "cas-hr", text: "Adequate human resources should be present during working hours." },
+        { id: "cas-drugs-eq", text: "Emergency drugs and equipment as per scope should be available." },
+        { id: "cas-signage", text: "Casualty signage should be displayed at the entrance." },
+        { id: "ramp", text: "Patient-friendly ramp or slope should be available." },
+        { id: "stretchers", text: "Stretchers/wheelchairs should be available." }
       ]},
       { code: "D", title: "Inpatient (IPD)", items: [
-        { id: "dept-signs", text: "Department & ward signboards displayed" },
-        { id: "on-call-doc", text: "Doctor available on call" },
-        { id: "nursing-trained", text: "Nursing personnel trained ≥1 year available" },
-        { id: "beds", text: "Beds available for inpatient treatment" },
-        { id: "call-system", text: "System to call nurses/attendants (intercom/call bell)" },
-        { id: "ipd-basics", text: "Hand wash/sanitizer, bedpan, waste bins, attendant chair/stool available" },
-        { id: "ipd-amenities", text: "Drinking water & gender‑specific toilets available" }
+        { id: "dept-signs", text: "Department and ward signboards should be displayed." },
+        { id: "on-call-doc", text: "Doctor should be available on call." },
+        { id: "nursing-trained", text: "Trained nursing personnel (minimum one year experience) should be available." },
+        { id: "beds", text: "Beds should be available for inpatient treatment as per scope." },
+        { id: "call-system", text: "There should be a system to call nurses/attendants (intercom/call bell)." },
+        { id: "ipd-basics", text: "Hand wash/sanitizer, bedpan, waste bins and attendant chair/stool should be available." },
+        { id: "ipd-amenities", text: "Drinking water and gender-specific toilets should be available." }
       ]},
       { code: "E", title: "OP Cabin Registration Standards", items: [
-        { id: "physician-display", text: "Physician name, qualification & registration number displayed" },
-        { id: "op-equip", text: "Chairs/stool, exam table, torch, thermometer (non‑mercury), BP apparatus (non‑mercury), stethoscope" },
-        { id: "handwash-wait", text: "Handwashing, drinking water & waiting space present" }
+        { id: "physician-display", text: "Physician name, qualification and registration number should be displayed." },
+        { id: "op-equip", text: "Chairs/stool, examination table, torch, thermometer (non-mercury), BP apparatus (non-mercury), stethoscope should be available." },
+        { id: "handwash-wait", text: "Handwashing facility, drinking water and waiting space should be available." }
       ]},
       { code: "F", title: "Laboratory Registration Standards", items: [
-        { id: "lab-consultant", text: "Consultant name, qualification & registration displayed" },
-        { id: "lab-charges", text: "Display of services & charges" },
-        { id: "lab-equip", text: "Equipment/instruments as per workload & scope" }
+        { id: "lab-consultant", text: "Consultant name, qualification and registration number should be displayed." },
+        { id: "lab-charges", text: "Display of services and charges should be available." },
+        { id: "lab-equip", text: "Equipment/instruments should be provided as per anticipated workload and scope of services." }
       ]},
       { code: "G", title: "Signage", items: [
-        { id: "bi-lang", text: "Signage in at least English & Malayalam; '24h emergency' desirable" },
-        { id: "name-board", text: "Hospital name board at prominent location" },
-        { id: "provider-reg", text: "Care provider name with registration number" },
-        { id: "reg-details", text: "Hospital registration details as per KCEA 2018" },
-        { id: "fee-structure", text: "Fee structure available (as per KCEA 2018)" },
-        { id: "timings", text: "Timings of hospital & services displayed" },
-        { id: "mandatory-info", text: "Mandatory information (e.g., PNDT) displayed as applicable" },
-        { id: "important-contacts", text: "Important contact numbers (blood banks, fire, police, ambulance)" },
-        { id: "hazard-signs", text: "Safety hazard & caution signs at appropriate places" },
-        { id: "fire-exit", text: "Fire exit signage" },
-        { id: "no-smoking", text: "'No Smoking' signage at prominent places" }
+        { id: "bi-lang", text: "Signages should be displayed in at least English and Malayalam; '24-hour emergency' signage is desirable." },
+        { id: "name-board", text: "Hospital name board should be displayed in a prominent location." },
+        { id: "provider-reg", text: "Name of care provider with registration number should be displayed." },
+        { id: "reg-details", text: "Hospital registration details (as per KCEA 2018) should be displayed." },
+        { id: "fee-structure", text: "Fee structure should be displayed (as per KCEA 2018)." },
+        { id: "timings", text: "Timings of hospital and services should be displayed." },
+        { id: "mandatory-info", text: "Mandatory information (e.g., PNDT) should be displayed as applicable." },
+        { id: "important-contacts", text: "Important contact numbers (blood banks, fire, police, ambulance) should be displayed." },
+        { id: "hazard-signs", text: "Safety hazard and caution signages should be displayed at appropriate locations." },
+        { id: "fire-exit", text: "Fire exit signage should be displayed." },
+        { id: "no-smoking", text: "'No Smoking' signage should be displayed at prominent places." }
       ]},
       { code: "H", title: "Infrastructure – Other Requirements", items: [
-        { id: "entry", text: "Convenient entry point" },
-        { id: "pwd", text: "Accessibility per Persons with Disabilities Act / restricted mobility" },
-        { id: "hygiene", text: "Safe, clean, hygienic environment for all" },
-        { id: "water-power", text: "24h potable water & hand hygiene; 24h electricity via utility/UPS/gen" },
-        { id: "public-toilets", text: "Clean public toilets (separate male/female; disabled friendly)" },
-        { id: "furniture", text: "Adequate, maintained furniture/fixtures as per workload (see Annexure 1)" }
+        { id: "entry", text: "Convenient entry point should be available." },
+        { id: "pwd", text: "Accessibility as per Persons with Disabilities Act / for restricted mobility should be available." },
+        { id: "hygiene", text: "Safe, clean and hygienic environment should be maintained for all." },
+        { id: "water-power", text: "24-hour potable water and hand hygiene facility; 24-hour electricity supply (utility/UPS/generator) should be available." },
+        { id: "public-toilets", text: "Clean public toilets should be available (separate male/female; disabled-friendly)." },
+        { id: "furniture", text: "Adequate and maintained furniture/fixtures should be provided as per workload (refer Annexure 1)." }
       ]},
       { code: "I", title: "Infrastructure – Space (Desirable unless stated)", items: [
-        { id: "waiting-100", text: "Reception & waiting: 100 sq.ft" },
-        { id: "consult-80", text: "Consultation cabin (with exam table): 80 sq.ft each" },
-        { id: "pharmacy-40", text: "Storage & pharmacy: 40 sq.ft" },
-        { id: "ancillary-60", text: "Ancillary area: 60 sq.ft" },
-        { id: "ward-circ", text: "Wards: 30% circulation for nursing, store, sanitary etc." },
-        { id: "ot-recep", text: "OT (minor): Reception & waiting 9.2 sq.m" },
-        { id: "ot-consult", text: "OT (minor): Consultation cabin 7.4 sq.m; exam 3.71 sq.m" },
-        { id: "ot-ancillary", text: "OT (minor): Storage/pharmacy/ancillary 5.57 sq.m" },
-        { id: "ward-areas", text: "Ward designated areas: nursing station, duty room, stores, utilities, janitor, toilets" },
-        { id: "ward-basin", text: "For 20‑bed ward: ≥1 working counter & ≥1 handwash basin" },
-        { id: "bed-gap", text: "Bed distance 1.0 m (desirable)" },
-        { id: "head-space", text: "Space at head end 0.25 m" },
-        { id: "door-corr", text: "Door width 1.2 m (desirable); corridor 2.5 m (desirable)" }
+        { id: "waiting-100", text: "Reception & Waiting: 100 sq.ft." },
+        { id: "consult-80", text: "Consultation Cabin (with examination table): 80 sq.ft. each." },
+        { id: "pharmacy-40", text: "Storage & Pharmacy: 40 sq.ft." },
+        { id: "ancillary-60", text: "Ancillary Area: 60 sq.ft." },
+        { id: "ward-circ", text: "Wards: 30% circulation space for nursing station, store, sanitary, etc." },
+        { id: "ot-recep", text: "OT (Minor): Reception & Waiting 9.2 sq.m." },
+        { id: "ot-consult", text: "OT (Minor): Consultation cabin 7.4 sq.m.; examination area 3.71 sq.m." },
+        { id: "ot-ancillary", text: "OT (Minor): Storage/pharmacy/ancillary 5.57 sq.m." },
+        { id: "ward-areas", text: "Ward designated areas should include nursing station, duty room, stores, utilities, janitor, toilets." },
+        { id: "ward-basin", text: "For a 20-bed ward: at least 1 working counter and at least 1 handwash basin should be available." },
+        { id: "bed-gap", text: "Bed distance should be 1.0 m (desirable)." },
+        { id: "head-space", text: "Space at the head end should be 0.25 m." },
+        { id: "door-corr", text: "Door width 1.2 m (desirable); corridor width 2.5 m (desirable)." }
       ]},
       { code: "J", title: "Medical Equipment & Instruments", items: [
-        { id: "adequate-equip", text: "Adequate equipment/instruments per scope & beds" },
-        { id: "maint-sys", text: "System for maintenance of critical equipment" },
-        { id: "amc", text: "Equipment in good condition via periodic inspection/cleaning/AMC" }
+        { id: "adequate-equip", text: "Adequate equipment/instruments should be available as per scope and number of beds." },
+        { id: "maint-sys", text: "System should exist for maintenance of critical equipment." },
+        { id: "amc", text: "Equipment should be maintained in good condition through periodic inspection/cleaning/AMC." }
       ]},
       { code: "K", title: "Drugs, Devices & Consumables", items: [
-        { id: "adequate-drugs", text: "Adequate drugs, devices, consumables" },
-        { id: "emg-drugs", text: "Emergency drugs & consumables available at all times" },
-        { id: "drug-storage", text: "Clean, lit, safe drug storage per law" },
-        { id: "inventory", text: "Defined procedures for storage, inventory & dispensing (pharmacy & care areas)" }
+        { id: "adequate-drugs", text: "Adequate drugs, devices and consumables should be available." },
+        { id: "emg-drugs", text: "Emergency drugs and consumables should be available at all times." },
+        { id: "drug-storage", text: "Drug storage should be clean, well-lit and safe as per laws." },
+        { id: "inventory", text: "Defined procedures for storage, inventory and dispensing (pharmacy and care areas) should be followed." }
       ]},
       { code: "L", title: "Human Resources", items: [
-        { id: "nursing-hr", text: "Qualified/trained nursing staff per scope & regulations" },
-        { id: "paramed-hr", text: "Qualified/trained paramedical staff per scope & regulations" },
-        { id: "staff-records", text: "Personal records for all staff incl. contracts, quals, registrations" },
-        { id: "mbbs-req", text: "MBBS doctor during working hours (24×7 if IPD). Advanced: PG MBBS; specialists on call" },
-        { id: "nurse-exp", text: "Trained nurses (≥1 year experience): ≥1" },
-        { id: "pharmacist", text: "Pharmacist if in-house pharmacy" },
-        { id: "lab-tech", text: "Lab technician if in-house lab" },
-        { id: "xray-tech", text: "X‑ray technician if in-house X‑ray" },
-        { id: "mts", text: "Multi-task staff: minimum 1" }
+        { id: "nursing-hr", text: "Qualified and trained nursing staff should be available as per scope and regulations." },
+        { id: "paramed-hr", text: "Qualified and trained paramedical staff should be available as per scope and regulations." },
+        { id: "staff-records", text: "Personal records should be maintained for all staff including contract details, qualifications and registration." },
+        { id: "mbbs-req", text: "MBBS doctor should be available during working hours (24×7 if IPD). Advanced settings: PG MBBS; specialists on call." },
+        { id: "nurse-exp", text: "At least one trained nurse with minimum one year experience should be available." },
+        { id: "pharmacist", text: "Pharmacist should be available if in-house pharmacy is present." },
+        { id: "lab-tech", text: "Lab technician should be available if in-house laboratory is present." },
+        { id: "xray-tech", text: "X-ray technician should be available if in-house X-ray is present." },
+        { id: "mts", text: "At least one multi-task staff should be available." }
       ]},
       { code: "M", title: "Support Services", items: [
-        { id: "reg-billing", text: "Registration/helpdesk & billing counter" },
-        { id: "diag", text: "Diagnostic services in-house or outsourced as per standards" },
-        { id: "pharmacy", text: "Pharmacy services in-house or outsourced" }
+        { id: "reg-billing", text: "Registration/helpdesk and billing counter should be present." },
+        { id: "diag", text: "Diagnostic services should be in-house or outsourced as per applicable standards." },
+        { id: "pharmacy", text: "Pharmacy services should be in-house or outsourced." }
       ]},
       { code: "N", title: "Waste Management", items: [
-        { id: "general-waste", text: "General waste management as per local laws" },
-        { id: "bmw-rules", text: "Biomedical waste management as per BMW Rules" }
+        { id: "general-waste", text: "General waste management should comply with local laws." },
+        { id: "bmw-rules", text: "Biomedical waste management should comply with BMW Rules." }
       ]},
       { code: "O", title: "Legal / Statutory", items: [
-        { id: "local-law", text: "Compliance with local regulations & law" },
-        { id: "ce-reg", text: "Clinical Establishments registration (if applicable)" },
-        { id: "pcb-bmw", text: "BMW authorization from PCB" },
-        { id: "other-lic", text: "Other mandatory licenses as per scope" }
+        { id: "local-law", text: "Compliance with local regulations and applicable laws should be ensured." },
+        { id: "ce-reg", text: "Clinical Establishments registration (if applicable) should be obtained." },
+        { id: "pcb-bmw", text: "BMW authorization from PCB should be obtained." },
+        { id: "other-lic", text: "Other mandatory licenses should be obtained as per the scope of services." }
       ]},
       { code: "P", title: "Records & Reporting", items: [
-        { id: "min-records", text: "Maintain minimum medical records per Annexure 4 & KCEA 2018" },
-        { id: "record-format", text: "Records maintained in physical or digital format" },
-        { id: "ipd-records", text: "IPD records per law, MCI guidelines & court orders" }
+        { id: "min-records", text: "Minimum medical records should be maintained as per Annexure 4 and KCEA 2018." },
+        { id: "record-format", text: "Records should be maintained in physical or digital format." },
+        { id: "ipd-records", text: "IPD records should comply with relevant laws, MCI guidelines and court orders." }
       ]}
     ];
 
@@ -213,9 +217,7 @@
       ].map((x,i)=>({id:`a4-${i}`,text:x})) },
     ];
 
-    // ---------------- UI Helpers ----------------
-    function nowStr(){ return new Date().toLocaleString(); }
-
+    // ---------------- UI Components ----------------
     function HeaderFields({ value, onChange }){
       return (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -297,38 +299,49 @@
     function FooterStamp({ when }){
       return (
         <div className="mt-6 text-xs text-slate-600">
-          <div>© Kerala State Council for Clinical Establishments (KSCCE). Designed by Nitin.</div>
+          <div>Kerala State Council for Clinical Establishments (KSCCE)</div>
           <div className="text-slate-400">Generated: {when}</div>
         </div>
       );
     }
 
-    // ---------------- Print sheets ----------------
+    // ---------------- Print: Full checklist (exact-style via tables) ----------------
+    function KscceHeader({ title }){
+      return (
+        <div className="mb-2">
+          <div style={{fontSize: '18px', fontWeight: 700}}>{title}</div>
+        </div>
+      );
+    }
+
     function FullReport({ meta, answers }){
       return (
         <div className="p-6 text-slate-900">
-          <h1 className="text-xl font-semibold mb-1">KSCCE Hospital Checklist – Full Report</h1>
+          <KscceHeader title="Checklist - Hospital" />
           <MetaTable meta={meta} />
+
           {[...SECTIONS, ...ANNEXURE_SECTIONS].map(s=> (
             <div key={s.code} className="mt-4 break-inside-avoid">
-              <h2 className="font-semibold mb-2">{s.code}. {s.title}</h2>
+              <div className="font-semibold mb-1">{s.code}. {s.title}</div>
               <table className="w-full text-sm border border-slate-300">
                 <thead className="bg-slate-100">
                   <tr>
+                    <th className="border border-slate-300 px-2 py-1 text-left w-[8%]">Sl. No.</th>
                     <th className="border border-slate-300 px-2 py-1 text-left">Item</th>
-                    <th className="border border-slate-300 px-2 py-1 text-left">Answer</th>
-                    <th className="border border-slate-300 px-2 py-1 text-left">Notes</th>
+                    <th className="border border-slate-300 px-2 py-1 text-left w-[12%]">Answer</th>
+                    <th className="border border-slate-300 px-2 py-1 text-left w-[28%]">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {s.items.map(it=>{
-                    const key=`${s.code}-${it.id}`;
-                    const row=answers[key]||{};
+                  {s.items.map((it, idx)=>{
+                    const key = `${s.code}-${it.id}`;
+                    const row = answers[key] || {};
                     return (
                       <tr key={key}>
+                        <td className="border border-slate-300 px-2 py-1 align-top">{idx+1}</td>
                         <td className="border border-slate-300 px-2 py-1 align-top">{it.text}</td>
-                        <td className="border border-slate-300 px-2 py-1 align-top w-[12%]">{row.v||''}</td>
-                        <td className="border border-slate-300 px-2 py-1 align-top w-[35%]">{row.note||''}</td>
+                        <td className="border border-slate-300 px-2 py-1 align-top">{row.v || ""}</td>
+                        <td className="border border-slate-300 px-2 py-1 align-top">{row.note || ""}</td>
                       </tr>
                     );
                   })}
@@ -336,11 +349,13 @@
               </table>
             </div>
           ))}
+
           <FooterStamp when={nowStr()} />
         </div>
       );
     }
 
+    // ---------------- Print: Non-compliance export ----------------
     function NonCompReport({ meta, answers }){
       const rows = [];
       for (const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){
@@ -352,23 +367,23 @@
       }
       return (
         <div className="p-6 text-slate-900">
-          <h1 className="text-xl font-semibold mb-1">KSCCE Hospital Checklist – Non‑Compliance Report</h1>
+          <KscceHeader title="Non-Compliance Report — Checklist (Hospital)" />
           <MetaTable meta={meta} />
           {rows.length ? (
             <table className="w-full text-sm border border-slate-300 mt-3">
               <thead className="bg-slate-100">
                 <tr>
-                  <th className="border border-slate-300 px-2 py-1 text-left">Section</th>
+                  <th className="border border-slate-300 px-2 py-1 text-left w-[25%]">Section</th>
                   <th className="border border-slate-300 px-2 py-1 text-left">Item</th>
-                  <th className="border border-slate-300 px-2 py-1 text-left">Notes / Corrective Action</th>
+                  <th className="border border-slate-300 px-2 py-1 text-left w-[35%]">Notes / Corrective Action</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r,i)=> (
                   <tr key={i}>
-                    <td className="border border-slate-300 px-2 py-1 align-top w-[22%]">{r.section}</td>
+                    <td className="border border-slate-300 px-2 py-1 align-top">{r.section}</td>
                     <td className="border border-slate-300 px-2 py-1 align-top">{r.item}</td>
-                    <td className="border border-slate-300 px-2 py-1 align-top w-[40%]">{r.note}</td>
+                    <td className="border border-slate-300 px-2 py-1 align-top">{r.note}</td>
                   </tr>
                 ))}
               </tbody>
@@ -379,60 +394,28 @@
       );
     }
 
-    // ---------------- Utilities ----------------
-    function migrateLoadedData(payload){
-      // Accepts older schema: {meta, answers} without version; also older keys Annx1..4
-      const out = { meta: {}, answers: {} };
-      try{
-        const meta = payload.meta || {};
-        const answers = payload.answers || {};
-
-        // Basic copy
-        out.meta = {
-          hospital: meta.hospital || "",
-          address: meta.address || "",
-          visitDates: meta.visitDates || meta.visitDate || "",
-          assessor: meta.assessor || meta.assessorName || ""
-        };
-
-        // Key migration: Annx1- -> Annexure 1-
-        const migrateKey = (k) => k
-          .replace(/^Annx1-/, "Annexure 1-")
-          .replace(/^Annx2-/, "Annexure 2-")
-          .replace(/^Annx3-/, "Annexure 3-")
-          .replace(/^Annx4-/, "Annexure 4-");
-
-        Object.keys(answers).forEach(k => {
-          const nk = migrateKey(k);
-          const v = answers[k];
-          if (v && typeof v === "object") out.answers[nk] = { v: v.v || v.value || "", note: v.note || v.notes || "" };
-          else if (typeof v === "string") out.answers[nk] = { v, note: "" };
-        });
-      }catch(e){ console.warn("Migration failed:", e); }
-      return out;
-    }
-
+    // ---------------- Export helpers (mobile-safe) ----------------
     function openPrintWindow(inner){
       const css = `
         body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Noto Sans, "Apple Color Emoji","Segoe UI Emoji"; margin: 0; padding: 0; color: #0f172a; }
         h1 { font-size: 18px; margin: 12px 0 6px; }
-        h2 { font-size: 14px; margin: 10px 0 6px; }
+        .wrap { padding: 20px; }
         table { border-collapse: collapse; width: 100%; }
         th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 12px; vertical-align: top; }
         thead th { background: #f1f5f9; }
-        .wrap { padding: 20px; }
         .mt-16 { margin-top: 16px; }
+        .meta td { font-size: 12px; }
+        ol { padding-left: 22px; }
       `;
       const win = window.open('', '_blank');
-      if (!win) { alert("Popup blocked. Please allow popups for this site to export."); return; }
+      if (!win) { alert("Popup blocked. Allow popups to export."); return; }
       win.document.open();
       win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Export</title><style>${css}</style></head><body><div class="wrap">${inner}</div></body></html>`);
       win.document.close();
-      // On iOS Safari, print after a tick
       setTimeout(()=>{ try { win.focus(); win.print(); } catch(e) {} }, 250);
     }
 
-    // ---------------- Auth ----------------
+    // ---------------- Auth Screen ----------------
     function AuthScreen(){
       const [tab, setTab] = useState("login");
       const [email, setEmail] = useState("");
@@ -575,15 +558,11 @@
 
       const storageKey = `kscce-${PROJECT_VERSION}-${userEmail||"local"}`;
       useEffect(()=>{
-        // Load from localStorage if present
         const raw=localStorage.getItem(storageKey);
-        if(raw){
-          try{ const p=JSON.parse(raw); setMeta(p.meta||{}); setAnswers(p.answers||{}); }catch{}
-        }
+        if(raw){ try{ const p=JSON.parse(raw); setMeta(p.meta||{}); setAnswers(p.answers||{}); }catch{} }
       },[]);
       useEffect(()=>{ localStorage.setItem(storageKey,JSON.stringify({version:PROJECT_VERSION,meta,answers})); setLastEdited(nowStr()); },[meta,answers]);
 
-      // Local save / load / new (with migration)
       function saveLocal(){
         const data = JSON.stringify({version:PROJECT_VERSION, meta, answers}, null, 2);
         const blob = new Blob([data],{type:'application/json'});
@@ -605,12 +584,11 @@
       }
       function newAssessment(){ if(confirm('Start a new assessment?')){ setMeta({hospital:'',address:'',visitDates:'',assessor:''}); setAnswers({}); } }
 
-      // Non‑compliances (live)
       const nonCompliances = useMemo(()=>{
         const out=[]; for(const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){ for(const it of s.items){ const k=`${s.code}-${it.id}`; if(answers[k]?.v==="No") out.push({section:s.code + ". " + s.title,item:it.text,note:answers[k]?.note||''}); } } return out;
       },[answers]);
 
-      // Prepare React 18 roots for export content (to grab innerHTML)
+      // Prepare React 18 roots for export
       const fullRootRef = useRef(null);
       const nonRootRef  = useRef(null);
       useEffect(()=>{
@@ -622,7 +600,6 @@
       function exportFull(){
         const mount = document.getElementById('sheet-full');
         fullRootRef.current.render(<FullReport meta={meta} answers={answers} />);
-        // Defer to allow React to commit
         setTimeout(()=>{
           const inner = mount.innerHTML;
           fullRootRef.current.render(null);
@@ -646,7 +623,7 @@
           <HeaderBar email={userEmail} onTab={setTab} tab={tab} onSignOut={signOut} />
 
           <main className="max-w-6xl mx-auto px-4 py-6">
-            {/* Toolbar ABOVE meta (screen only; never prints) */}
+            {/* Toolbar */}
             <div className="mb-4 bg-white border border-slate-200 rounded-2xl shadow-sm px-4 py-3 flex flex-wrap gap-2 items-center">
               <button onClick={exportFull} className="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm shadow">Export Full Report (PDF)</button>
               <button onClick={exportNonComp} className="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm shadow">Export Non‑Compliances (PDF)</button>
@@ -683,6 +660,33 @@
           <footer className="text-xs text-center py-4 border-t">© Kerala State Council for Clinical Establishments (KSCCE). Designed by Nitin.</footer>
         </>
       );
+    }
+
+    // ---------------- Migration helper ----------------
+    function migrateLoadedData(payload){
+      const out = { meta: {}, answers: {} };
+      try{
+        const meta = payload.meta || {};
+        const answers = payload.answers || {};
+        out.meta = {
+          hospital: meta.hospital || "",
+          address: meta.address || "",
+          visitDates: meta.visitDates || meta.visitDate || "",
+          assessor: meta.assessor || meta.assessorName || ""
+        };
+        const migrateKey = (k) => k
+          .replace(/^Annx1-/, "Annexure 1-")
+          .replace(/^Annx2-/, "Annexure 2-")
+          .replace(/^Annx3-/, "Annexure 3-")
+          .replace(/^Annx4-/, "Annexure 4-");
+        Object.keys(answers).forEach(k => {
+          const nk = migrateKey(k);
+          const v = answers[k];
+          if (v && typeof v === "object") out.answers[nk] = { v: v.v || v.value || "", note: v.note || v.notes || "" };
+          else if (typeof v === "string") out.answers[nk] = { v, note: "" };
+        });
+      }catch(e){ console.warn("Migration failed:", e); }
+      return out;
     }
 
     function App(){
