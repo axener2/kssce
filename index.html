@@ -216,7 +216,6 @@
         "Name & Registration number of treating doctor","Name, demographic details & contact number of patient","Relevant Clinical history, Assessment and re-assessment findings, nursing notes and Diagnosis","Investigation reports","Details of medical treatment, invasive procedures, surgery and other care provided","Applicable consents","Discharge summary","Cause-of-death certificate & Death Summary (where applicable)"
       ].map((x,i)=>({id:'a4-'+i,text:x})) },
     ];
-
     // ---------------- UI: Assessors ----------------
     function HeaderFields({ value, onChange, onMetaChange }){
       const assessors = Array.isArray(value.assessors) && value.assessors.length
@@ -512,15 +511,24 @@
         </header>
       );
     }
-
     // ---------- Debounce util ----------
+    // UPDATED: add flush() so we never lose the last keystrokes when leaving a session/window.
     function makeDebounced(fn, wait=WRITE_DEBOUNCE_MS){
       let t=null, pending=null;
-      return (patch)=>{
+      function run(){
+        const p = pending;
+        pending = null;
+        if (p) fn(p);
+      }
+      const wrapper = (patch)=>{
         pending = { ...(pending||{}), ...patch };
         clearTimeout(t);
-        t=setTimeout(()=>{ const p=pending; pending=null; fn(p); }, wait);
+        t = setTimeout(run, wait);
       };
+      wrapper.flush = ()=>{
+        if (pending) { clearTimeout(t); run(); }
+      };
+      return wrapper;
     }
 
     function ChecklistApp({ userEmail }){
@@ -649,6 +657,14 @@
       const assessUnsub = useRef(null);
       async function attachLiveSession(id){
         if(!id) return;
+
+        // ensure I'm listed as a participant (idempotent)
+        try{
+          await db().collection(ASSESS_COLL).doc(id).set({
+            participants: firebase.firestore.FieldValue.arrayUnion(userEmailLower)
+          }, { merge: true });
+        }catch(e){ console.warn("participants union failed", e); }
+
         // subscribe doc
         assessUnsub.current && assessUnsub.current();
         assessUnsub.current = db().collection(ASSESS_COLL).doc(id).onSnapshot(doc=>{
@@ -667,6 +683,9 @@
         await startPresence(id);
       }
       async function detachLiveSession(removeFromParticipants){
+        // flush any pending writes before leaving
+        try { debouncedPush.current && debouncedPush.current.flush && debouncedPush.current.flush(); } catch(e){}
+
         assessUnsub.current && assessUnsub.current();
         assessUnsub.current = null;
         await stopPresence();
@@ -705,12 +724,24 @@
             await db().collection(ASSESS_COLL).doc(liveSessionId).set(updates, { merge: true });
           }catch(e){ console.warn("Sync failed", e); }
         }, WRITE_DEBOUNCE_MS);
+
+        // on window/tab close, flush pending writes & clear presence
+        const beforeUnload = ()=>{
+          try { debouncedPush.current && debouncedPush.current.flush && debouncedPush.current.flush(); } catch(e){}
+          // best-effort presence cleanup
+          try { navigator.sendBeacon && navigator.sendBeacon(); } catch(e){}
+        };
+        window.addEventListener('beforeunload', beforeUnload);
+        return ()=>{
+          window.removeEventListener('beforeunload', beforeUnload);
+          try { debouncedPush.current && debouncedPush.current.flush && debouncedPush.current.flush(); } catch(e){}
+        };
       },[liveSessionId, userEmailLower]);
 
       // Hook for changes/typing
       function onFieldChange(evt){
-        if(!liveSessionId) return;         
-        if(remoteApplyingRef.current) return; 
+        if(!liveSessionId) return;
+        if(remoteApplyingRef.current) return;
         if(evt.type === 'answer'){
           const k = evt.key;
           const existing = answers[k] || {};
@@ -809,8 +840,7 @@
           alert("Joined live session.");
         }catch(e){ console.warn(e); alert("Failed to accept invite."); }
       }
-
-      // ----- New assessment / Leave session -----
+     // ----- New assessment / Leave session -----
       async function newAssessment(){
         if(confirm('Start a new assessment? This will leave the live session.')){
           await detachLiveSession(true); // remove me from participants
@@ -1079,4 +1109,4 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
   </script>
 </body>
-</html>
+</html> 
