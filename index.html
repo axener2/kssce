@@ -648,47 +648,33 @@
       const remoteApplyingRef = useRef(false);
       const assessUnsub = useRef(null);
       async function attachLiveSession(id){
-        if(!id) return;
-        // subscribe doc
-        assessUnsub.current && assessUnsub.current();
-        assessUnsub.current = db().collection(ASSESS_COLL).doc(id).onSnapshot(doc=>{
-          const data = doc.data();
-          if(!data) return;
-          remoteApplyingRef.current = true;
-          try {
-            if (data.meta) setMeta(prev => ({ ...prev, ...data.meta }));
-            if (data.answers) setAnswers(prev => {
-            const merged = { ...prev };
-            for (const [k, v] of Object.entries(data.answers || {})) {
-              merged[k] = { ...(prev[k] || {}), ...(v || {}) };
-            }
-            return merged;
-          });
-            setLiveParticipants(Array.isArray(data.participants)? data.participants : []);
-          } finally {
-            setTimeout(()=>{ remoteApplyingRef.current = false; }, 0);
+  if(!id) return;
+  assessUnsub.current && assessUnsub.current();
+  assessUnsub.current = db().collection(ASSESS_COLL).doc(id).onSnapshot(doc=>{
+    const data = doc.data(); if(!data) return;
+    remoteApplyingRef.current = true;
+    try {
+      if(data.meta){
+        // merge meta fields instead of overwriting
+        setMeta(prev => ({ ...prev, ...data.meta }));
+      }
+      if(data.answers){
+        // merge each answer instead of overwriting whole object
+        setAnswers(prev=>{
+          const merged={...prev};
+          for(const [k,v] of Object.entries(data.answers||{})){
+            merged[k] = { ...(prev[k]||{}), ...(v||{}) };
           }
-        }, err=>console.warn(err));
-        // presence start
-        await startPresence(id);
+          return merged;
+        });
       }
-      async function detachLiveSession(removeFromParticipants){
-        assessUnsub.current && assessUnsub.current();
-        assessUnsub.current = null;
-        await stopPresence();
-        if (liveSessionId && removeFromParticipants) {
-          try{
-            await db().collection(ASSESS_COLL).doc(liveSessionId).set({
-              participants: firebase.firestore.FieldValue.arrayRemove(userEmailLower),
-              updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-              lastWriter: userEmailLower
-            }, { merge: true });
-          }catch(e){ console.warn(e); }
-        }
-        setLiveSessionId(null);
-        setTypingMap({});
-        setWhoTypingTop([]);
-      }
+      setLiveParticipants(Array.isArray(data.participants)? data.participants : []);
+    } finally {
+      setTimeout(()=>{ remoteApplyingRef.current = false; }, 0);
+    }
+  }, err=>console.warn(err));
+  await startPresence(id);
+}
 
       // ----- Debounced push to Firestore -----
       const debouncedPush = useRef(null);
@@ -715,22 +701,26 @@
 
       // Hook for changes/typing
       function onFieldChange(evt){
-        if(!liveSessionId) return;         
-        if(remoteApplyingRef.current) return; 
-        if(evt.type === 'answer'){
-          const k = evt.key;
-          const existing = answers[k] || {};
-          const next = { ...existing, [evt.sub]: evt.val };
-          debouncedPush.current && debouncedPush.current({ answers: { [k]: next } });
-          // typing heartbeat if provided
-          if (evt.typing) setTypingState(k, evt.sub, true);
-        } else if(evt.type === 'typing'){
-          setTypingState(evt.key, evt.sub, evt.on);
-        } else if(evt.type === 'meta'){
-          const nextMeta = { ...evt.patch };
-          debouncedPush.current && debouncedPush.current({ meta: nextMeta });
-        }
-      }
+  if(!liveSessionId) return;
+  if(remoteApplyingRef.current) return;   // guard to avoid echo loops
+
+  if(evt.type === 'answer'){
+    const k = evt.key;
+    const existing = answers[k] || {};
+    const next = { ...existing, [evt.sub]: evt.val };
+    debouncedPush.current && debouncedPush.current({ answers: { [k]: next } });
+
+    // typing heartbeat
+    if (evt.typing) setTypingState(k, evt.sub, true);
+  } 
+  else if(evt.type === 'typing'){
+    setTypingState(evt.key, evt.sub, evt.on);
+  } 
+  else if(evt.type === 'meta'){
+    // just send the patch
+    debouncedPush.current && debouncedPush.current({ meta: evt.patch });
+  }
+}
       // Meta wrapper to sync
       function onMetaChange(nextMeta){
         if(!liveSessionId) return;
