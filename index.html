@@ -35,7 +35,7 @@
 <body class="bg-slate-100">
   <div id="root" class="screen-only"></div>
   <div id="sheet-full" class="print-only"></div>
-  <div id="sheet-noncomp" className="print-only"></div>
+  <div id="sheet-noncomp" class="print-only"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
@@ -712,6 +712,9 @@
       // ----- Debounced push to Firestore -----
       const debouncedPush = useRef(null);
       useEffect(()=>{
+// ----- Debounced push to Firestore -----
+      const debouncedPush = useRef(null);
+      useEffect(()=>{
         debouncedPush.current = makeDebounced(async (patch)=>{
           if(!liveSessionId) return;
           try{
@@ -719,14 +722,27 @@
               updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
               lastWriter: userEmailLower
             };
-            if(patch.meta){
+
+            // Meta = write whole object (safe)
+            if (patch.meta){
               Object.assign(updates, { meta: patch.meta });
             }
-            if(patch.answers){
-              for(const [k,v] of Object.entries(patch.answers)){
+
+            // ✅ NEW: answersPath = field-level updates (e.g., answers.A-ic-measures.v)
+            if (patch.answersPath){
+              for (const [subPath, val] of Object.entries(patch.answersPath)){
+                updates[`answers.${subPath}`] = val;
+              }
+            }
+
+            // (Back-compat) If someone still passes full answers blocks,
+            // we keep it — but field-level writes above are the new default.
+            if (patch.answers){
+              for (const [k,v] of Object.entries(patch.answers)){
                 updates[`answers.${k}`] = v;
               }
             }
+
             await db().collection(ASSESS_COLL).doc(liveSessionId).set(updates, { merge: true });
           }catch(e){ console.warn("Sync failed", e); }
         }, WRITE_DEBOUNCE_MS);
@@ -734,20 +750,25 @@
 
       // ----- Hook for changes/typing (edited) -----
       function onFieldChange(evt){
+// ----- Hook for changes/typing (field-level for answers) -----
+      function onFieldChange(evt){
         if (evt.type === 'answer') {
-          const k = evt.key;
+          const k = evt.key;             // e.g., "A-ic-measures"
+          const sub = evt.sub;           // "v" or "note"
           const val = evt.val;
-          // local optimistic
+
+          // Local optimistic update
           setAnswers(s => {
             const existing = s[k] || {};
-            return { ...s, [k]: { ...existing, [evt.sub]: val } };
+            return { ...s, [k]: { ...existing, [sub]: val } };
           });
-          // remote if in session
+
+          // Remote field-level update (only the one subfield)
           if (liveSessionId && !remoteApplyingRef.current) {
-            const existing = answers[k] || {};
-            const next = { ...existing, [evt.sub]: val };
-            debouncedPush.current && debouncedPush.current({ answers: { [k]: next } });
-            if (evt.typing) setTypingState(k, evt.sub, true);
+            debouncedPush.current && debouncedPush.current({
+              answersPath: { [`${k}.${sub}`]: val }
+            });
+            if (evt.typing) setTypingState(k, sub, true);
           }
 
         } else if (evt.type === 'typing') {
@@ -755,9 +776,9 @@
 
         } else if (evt.type === 'meta') {
           const patch = evt.patch || {};
-          // local optimistic
+          // Local optimistic
           setMeta(m => ({ ...m, ...patch }));
-          // remote if in session
+          // Remote
           if (liveSessionId && !remoteApplyingRef.current) {
             debouncedPush.current && debouncedPush.current({ meta: patch });
           }
@@ -1119,6 +1140,7 @@
             const ok = await isAllowlisted(user.email || "");
             if (!ok) { try { await auth().signOut(); } catch {} setState({ loading: false, user: null, allowed: false }); }
             else { setState({ loading: false, user, allowed: true }); }
+
           }
         });
       },[]);
