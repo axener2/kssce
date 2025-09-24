@@ -35,7 +35,7 @@
 <body class="bg-slate-100">
   <div id="root" class="screen-only"></div>
   <div id="sheet-full" class="print-only"></div>
-  <div id="sheet-noncomp" class="print-only"></div>
+  <div id="sheet-noncomp" className="print-only"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
@@ -216,6 +216,7 @@
         "Name & Registration number of treating doctor","Name, demographic details & contact number of patient","Relevant Clinical history, Assessment and re-assessment findings, nursing notes and Diagnosis","Investigation reports","Details of medical treatment, invasive procedures, surgery and other care provided","Applicable consents","Discharge summary","Cause-of-death certificate & Death Summary (where applicable)"
       ].map((x,i)=>({id:'a4-'+i,text:x})) },
     ];
+
     // ---------------- UI: Assessors ----------------
     function HeaderFields({ value, onChange, onMetaChange }){
       const assessors = Array.isArray(value.assessors) && value.assessors.length
@@ -343,7 +344,6 @@
         </div>
       );
     }
-
     // ------- Print header & helpers -------
     function PdfHeader(){
       return (
@@ -540,20 +540,7 @@
       const userEmailLower = (userEmail||"").toLowerCase();
       const SESSION_KEY = 'kscce-live-session-' + (userEmailLower || 'anon');
 
-      // Local optimistic guard: keys we changed locally very recently -> don't let snapshot overwrite immediately (prevents flicker/unselection)
-      const pendingKeysRef = useRef(new Map()); // key -> expiry ts (ms)
-      function markPendingKey(k, ms=800){
-        const until = Date.now() + ms;
-        pendingKeysRef.current.set(k, until);
-      }
-      function purgePending(){
-        const now = Date.now();
-        for (const [k, t] of pendingKeysRef.current) {
-          if (t <= now) pendingKeysRef.current.delete(k);
-        }
-      }
-
-      // local persistence (per-user)
+      // local persistence
       const storageKey = 'kscce-' + VERSION + '-' + (userEmail || "local");
       useEffect(()=>{
         const raw=localStorage.getItem(storageKey);
@@ -568,7 +555,6 @@
       useEffect(()=>{
         const sid = localStorage.getItem(SESSION_KEY);
         if (sid && !liveSessionId) {
-          // Try to attach; if fails, clear stored id
           attachLiveSession(sid).then(()=>{
             setLiveSessionId(sid);
           }).catch(()=>{
@@ -616,7 +602,6 @@
 
       async function startPresence(sessionId){
         if(!sessionId) return;
-        // heartbeat writer
         clearInterval(presenceTimer.current);
         presenceTimer.current = setInterval(async ()=>{
           try{
@@ -627,7 +612,6 @@
             }, { merge: true });
           }catch(e){ console.warn("presence heartbeat fail", e); }
         }, PRESENCE_HEARTBEAT_MS);
-        // initial write immediately
         try{
           await db().collection(PRESENCE_COLL).doc(safeId(userEmailLower)).set({
             email: userEmailLower,
@@ -635,12 +619,11 @@
             lastActive: firebase.firestore.FieldValue.serverTimestamp()
           }, { merge: true });
         }catch(e){}
-        // subscribe to presence docs in this session
         presenceUnsub.current && presenceUnsub.current();
         presenceUnsub.current = db().collection(PRESENCE_COLL).where('sessionId','==',sessionId).onSnapshot(snap=>{
           const now = Date.now();
           const online = [];
-          const typingEntries = []; // {email, key, sub}
+          const typingEntries = [];
           const keyToEmails = {};
           snap.forEach(doc=>{
             const d = doc.data();
@@ -676,44 +659,37 @@
       // ----- Live session (subscribe to the assessment doc) -----
       const remoteApplyingRef = useRef(false);
       const assessUnsub = useRef(null);
+
       async function attachLiveSession(id){
         if(!id) return;
-        // subscribe doc
+
         assessUnsub.current && assessUnsub.current();
         assessUnsub.current = db().collection(ASSESS_COLL).doc(id).onSnapshot(doc=>{
           const data = doc.data();
           if(!data) return;
+
+          // 🔒 prevent echo & flicker
+          if (doc.metadata && doc.metadata.hasPendingWrites) return;
+          if (data.lastWriter && data.lastWriter === userEmailLower) return;
+
           remoteApplyingRef.current = true;
           try {
-            // Merge instead of replace to avoid flicker/unselection +
-            // honor local pending keys (optimistic updates)
             if (data.meta) {
               setMeta(prev => ({ ...prev, ...(data.meta || {}) }));
             }
             if (data.answers) {
-              purgePending();
-              setAnswers(prev => {
-                const incoming = data.answers || {};
-                const now = Date.now();
-                const merged = { ...prev };
-                for (const [k, v] of Object.entries(incoming)) {
-                  const until = pendingKeysRef.current.get(k) || 0;
-                  if (until > now) continue; // keep local while user just typed
-                  merged[k] = v;
-                }
-                return merged;
-              });
+              setAnswers(prev => ({ ...prev, ...(data.answers || {}) }));
             }
             setLiveParticipants(Array.isArray(data.participants)? data.participants : []);
           } finally {
             setTimeout(()=>{ remoteApplyingRef.current = false; }, 0);
           }
         }, err=>console.warn(err));
-        // presence start
+
         await startPresence(id);
-        // persist session id across refresh
         try { localStorage.setItem(SESSION_KEY, id); } catch {}
       }
+
       async function detachLiveSession(removeFromParticipants){
         assessUnsub.current && assessUnsub.current();
         assessUnsub.current = null;
@@ -756,30 +732,38 @@
         }, WRITE_DEBOUNCE_MS);
       },[liveSessionId, userEmailLower]);
 
-      // Hook for changes/typing
+      // ----- Hook for changes/typing (edited) -----
       function onFieldChange(evt){
-        // always allow local typing; sync remotely only if in a session
         if (evt.type === 'answer') {
           const k = evt.key;
-          // mark as pending to avoid snapshot flicker
-          markPendingKey(k);
+          const val = evt.val;
+          // local optimistic
+          setAnswers(s => {
+            const existing = s[k] || {};
+            return { ...s, [k]: { ...existing, [evt.sub]: val } };
+          });
+          // remote if in session
           if (liveSessionId && !remoteApplyingRef.current) {
             const existing = answers[k] || {};
-            const next = { ...existing, [evt.sub]: evt.val };
+            const next = { ...existing, [evt.sub]: val };
             debouncedPush.current && debouncedPush.current({ answers: { [k]: next } });
-            // typing heartbeat if provided
             if (evt.typing) setTypingState(k, evt.sub, true);
           }
+
         } else if (evt.type === 'typing') {
           if (liveSessionId) setTypingState(evt.key, evt.sub, evt.on);
+
         } else if (evt.type === 'meta') {
+          const patch = evt.patch || {};
+          // local optimistic
+          setMeta(m => ({ ...m, ...patch }));
+          // remote if in session
           if (liveSessionId && !remoteApplyingRef.current) {
-            const nextMeta = { ...evt.patch };
-            debouncedPush.current && debouncedPush.current({ meta: nextMeta });
+            debouncedPush.current && debouncedPush.current({ meta: patch });
           }
         }
       }
-      // Meta wrapper to sync
+
       function onMetaChange(nextMeta){
         if(liveSessionId && !remoteApplyingRef.current){
           debouncedPush.current && debouncedPush.current({ meta: nextMeta });
@@ -809,7 +793,6 @@
         if(!(await isAllowlisted(to))){ alert("Recipient email is not registered/allowlisted."); return; }
 
         try{
-          // create assessment with only sender as participant
           const assessRef = await db().collection(ASSESS_COLL).add({
             version: VERSION,
             owner: userEmailLower,
@@ -819,7 +802,6 @@
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             lastWriter: userEmailLower
           });
-          // send invite referencing assessmentId
           await db().collection(INVITES_COLL).add({
             sender: userEmailLower,
             recipient: to,
@@ -828,7 +810,6 @@
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
           setInviteEmail("");
-          // attach sender to live session + persist session id
           setLiveSessionId(assessRef.id);
           await attachLiveSession(assessRef.id);
           try { localStorage.setItem(SESSION_KEY, assessRef.id); } catch {}
@@ -852,7 +833,6 @@
             status: 'accepted',
             acceptedAt: firebase.firestore.FieldValue.serverTimestamp()
           });
-          // add recipient to participants
           await db().collection(ASSESS_COLL).doc(inv.assessmentId).set({
             participants: firebase.firestore.FieldValue.arrayUnion(userEmailLower),
             updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -869,9 +849,7 @@
       // ----- New assessment / Leave session -----
       async function newAssessment(){
         if(!confirm('This starts a new assessment and will CLEAR all fields. Continue?')) return;
-        // Leave live session (if any) and clear stored session id
-        await detachLiveSession(true); // remove me from participants
-        // Clear everything locally
+        await detachLiveSession(true);
         const freshMeta = {hospital:'',address:"",visitDates:"",assessor:"", assessors:[{name:"", role:""}]};
         setMeta(freshMeta);
         setAnswers({});
@@ -879,8 +857,7 @@
       }
       async function leaveLiveSession(){
         if(!liveSessionId){ return; }
-        await detachLiveSession(true); // remove me from participants
-        // Keep local fields as-is (as requested)
+        await detachLiveSession(true);
       }
 
       // ----- Export helpers -----
@@ -971,14 +948,7 @@
 
             <div className="space-y-6 mt-6">
               {(tab==="Checklist"?SECTIONS:ANNEXURE_SECTIONS.filter(x=>x.code===tab)).map(s => (
-                <SectionCard
-                  key={s.code}
-                  section={s}
-                  state={answers}
-                  setState={setAnswers}
-                  onFieldChange={onFieldChange}
-                  typingMap={typingMap}
-                />
+                <SectionCard key={s.code} section={s} state={answers} setState={setAnswers} onFieldChange={onFieldChange} typingMap={typingMap}/>
               ))}
             </div>
 
@@ -1147,12 +1117,8 @@
             setState({ loading: false, user: null, allowed: false });
           } else {
             const ok = await isAllowlisted(user.email || "");
-            if (!ok) {
-              try { await auth().signOut(); } catch {}
-              setState({ loading: false, user: null, allowed: false });
-            } else {
-              setState({ loading: false, user, allowed: true });
-            }
+            if (!ok) { try { await auth().signOut(); } catch {} setState({ loading: false, user: null, allowed: false }); }
+            else { setState({ loading: false, user, allowed: true }); }
           }
         });
       },[]);
