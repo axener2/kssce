@@ -216,7 +216,6 @@
         "Name & Registration number of treating doctor","Name, demographic details & contact number of patient","Relevant Clinical history, Assessment and re-assessment findings, nursing notes and Diagnosis","Investigation reports","Details of medical treatment, invasive procedures, surgery and other care provided","Applicable consents","Discharge summary","Cause-of-death certificate & Death Summary (where applicable)"
       ].map((x,i)=>({id:'a4-'+i,text:x})) },
     ];
-
     // ---------------- UI: Assessors ----------------
     function HeaderFields({ value, onChange, onMetaChange }){
       const assessors = Array.isArray(value.assessors) && value.assessors.length
@@ -522,7 +521,6 @@
         t=setTimeout(()=>{ const p=pending; pending=null; fn(p); }, wait);
       };
     }
-
     function ChecklistApp({ userEmail }){
       const [meta,setMeta]=useState({hospital:"",address:"",visitDates:"",assessor:""});
       const [answers,setAnswers]=useState({});
@@ -540,14 +538,45 @@
       const [whoTypingTop, setWhoTypingTop] = useState([]); // overall typing
 
       const userEmailLower = (userEmail||"").toLowerCase();
+      const SESSION_KEY = 'kscce-live-session-' + (userEmailLower || 'anon');
 
-      // local persistence
+      // Local optimistic guard: keys we changed locally very recently -> don't let snapshot overwrite immediately (prevents flicker/unselection)
+      const pendingKeysRef = useRef(new Map()); // key -> expiry ts (ms)
+      function markPendingKey(k, ms=800){
+        const until = Date.now() + ms;
+        pendingKeysRef.current.set(k, until);
+      }
+      function purgePending(){
+        const now = Date.now();
+        for (const [k, t] of pendingKeysRef.current) {
+          if (t <= now) pendingKeysRef.current.delete(k);
+        }
+      }
+
+      // local persistence (per-user)
       const storageKey = 'kscce-' + VERSION + '-' + (userEmail || "local");
       useEffect(()=>{
         const raw=localStorage.getItem(storageKey);
         if(raw){ try{ const p=JSON.parse(raw); setMeta(p.meta||{}); setAnswers(p.answers||{}); }catch{} }
       },[]);
-      useEffect(()=>{ localStorage.setItem(storageKey,JSON.stringify({meta,answers})); setLastEdited(new Date().toLocaleString()); },[meta,answers]);
+      useEffect(()=>{
+        localStorage.setItem(storageKey,JSON.stringify({meta,answers}));
+        setLastEdited(new Date().toLocaleString());
+      },[meta,answers]);
+
+      // Restore live session across refresh
+      useEffect(()=>{
+        const sid = localStorage.getItem(SESSION_KEY);
+        if (sid && !liveSessionId) {
+          // Try to attach; if fails, clear stored id
+          attachLiveSession(sid).then(()=>{
+            setLiveSessionId(sid);
+          }).catch(()=>{
+            try { localStorage.removeItem(SESSION_KEY); } catch {}
+          });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      },[]);
 
       function saveLocal(){
         const data = JSON.stringify({version:VERSION, meta, answers}, null, 2);
@@ -656,8 +685,25 @@
           if(!data) return;
           remoteApplyingRef.current = true;
           try {
-            if(data.meta) setMeta(data.meta);
-            if(data.answers) setAnswers(data.answers);
+            // Merge instead of replace to avoid flicker/unselection +
+            // honor local pending keys (optimistic updates)
+            if (data.meta) {
+              setMeta(prev => ({ ...prev, ...(data.meta || {}) }));
+            }
+            if (data.answers) {
+              purgePending();
+              setAnswers(prev => {
+                const incoming = data.answers || {};
+                const now = Date.now();
+                const merged = { ...prev };
+                for (const [k, v] of Object.entries(incoming)) {
+                  const until = pendingKeysRef.current.get(k) || 0;
+                  if (until > now) continue; // keep local while user just typed
+                  merged[k] = v;
+                }
+                return merged;
+              });
+            }
             setLiveParticipants(Array.isArray(data.participants)? data.participants : []);
           } finally {
             setTimeout(()=>{ remoteApplyingRef.current = false; }, 0);
@@ -665,6 +711,8 @@
         }, err=>console.warn(err));
         // presence start
         await startPresence(id);
+        // persist session id across refresh
+        try { localStorage.setItem(SESSION_KEY, id); } catch {}
       }
       async function detachLiveSession(removeFromParticipants){
         assessUnsub.current && assessUnsub.current();
@@ -682,6 +730,7 @@
         setLiveSessionId(null);
         setTypingMap({});
         setWhoTypingTop([]);
+        try { localStorage.removeItem(SESSION_KEY); } catch {}
       }
 
       // ----- Debounced push to Firestore -----
@@ -709,27 +758,32 @@
 
       // Hook for changes/typing
       function onFieldChange(evt){
-        if(!liveSessionId) return;         
-        if(remoteApplyingRef.current) return; 
-        if(evt.type === 'answer'){
+        // always allow local typing; sync remotely only if in a session
+        if (evt.type === 'answer') {
           const k = evt.key;
-          const existing = answers[k] || {};
-          const next = { ...existing, [evt.sub]: evt.val };
-          debouncedPush.current && debouncedPush.current({ answers: { [k]: next } });
-          // typing heartbeat if provided
-          if (evt.typing) setTypingState(k, evt.sub, true);
-        } else if(evt.type === 'typing'){
-          setTypingState(evt.key, evt.sub, evt.on);
-        } else if(evt.type === 'meta'){
-          const nextMeta = { ...evt.patch };
-          debouncedPush.current && debouncedPush.current({ meta: nextMeta });
+          // mark as pending to avoid snapshot flicker
+          markPendingKey(k);
+          if (liveSessionId && !remoteApplyingRef.current) {
+            const existing = answers[k] || {};
+            const next = { ...existing, [evt.sub]: evt.val };
+            debouncedPush.current && debouncedPush.current({ answers: { [k]: next } });
+            // typing heartbeat if provided
+            if (evt.typing) setTypingState(k, evt.sub, true);
+          }
+        } else if (evt.type === 'typing') {
+          if (liveSessionId) setTypingState(evt.key, evt.sub, evt.on);
+        } else if (evt.type === 'meta') {
+          if (liveSessionId && !remoteApplyingRef.current) {
+            const nextMeta = { ...evt.patch };
+            debouncedPush.current && debouncedPush.current({ meta: nextMeta });
+          }
         }
       }
       // Meta wrapper to sync
       function onMetaChange(nextMeta){
-        if(!liveSessionId) return;
-        if(remoteApplyingRef.current) return;
-        debouncedPush.current && debouncedPush.current({ meta: nextMeta });
+        if(liveSessionId && !remoteApplyingRef.current){
+          debouncedPush.current && debouncedPush.current({ meta: nextMeta });
+        }
       }
 
       // Typing state in presence doc
@@ -774,9 +828,10 @@
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
           setInviteEmail("");
-          // attach sender to live session
+          // attach sender to live session + persist session id
           setLiveSessionId(assessRef.id);
           await attachLiveSession(assessRef.id);
+          try { localStorage.setItem(SESSION_KEY, assessRef.id); } catch {}
           alert("Invite sent. Live session started.");
         }catch(e){
           console.warn(e);
@@ -805,6 +860,7 @@
           }, { merge: true });
           setLiveSessionId(inv.assessmentId);
           await attachLiveSession(inv.assessmentId);
+          try { localStorage.setItem(SESSION_KEY, inv.assessmentId); } catch {}
           setShowTeam(false);
           alert("Joined live session.");
         }catch(e){ console.warn(e); alert("Failed to accept invite."); }
@@ -812,20 +868,31 @@
 
       // ----- New assessment / Leave session -----
       async function newAssessment(){
-        if(confirm('Start a new assessment? This will leave the live session.')){
-          await detachLiveSession(true); // remove me from participants
-          setMeta({hospital:'',address:'',visitDates:'',assessor:''});
-          setAnswers({});
-        }
+        if(!confirm('This starts a new assessment and will CLEAR all fields. Continue?')) return;
+        // Leave live session (if any) and clear stored session id
+        await detachLiveSession(true); // remove me from participants
+        // Clear everything locally
+        const freshMeta = {hospital:'',address:"",visitDates:"",assessor:"", assessors:[{name:"", role:""}]};
+        setMeta(freshMeta);
+        setAnswers({});
+        try { localStorage.removeItem(storageKey); } catch {}
       }
       async function leaveLiveSession(){
         if(!liveSessionId){ return; }
         await detachLiveSession(true); // remove me from participants
+        // Keep local fields as-is (as requested)
       }
 
       // ----- Export helpers -----
       const nonCompliances = useMemo(()=>{
-        const out=[]; for(const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){ for(const it of s.items){ const k=s.code + '-' + it.id; if(answers[k]?.v==="No") out.push({section:s.code + ". " + s.title,item:it.text,note:answers[k]?.note||''}); } } return out;
+        const out=[]; 
+        for(const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){
+          for(const it of s.items){
+            const k=s.code + '-' + it.id; 
+            if(answers[k]?.v==="No") out.push({section:s.code + ". " + s.title,item:it.text,note:answers[k]?.note||''}); 
+          }
+        } 
+        return out;
       },[answers]);
 
       const fullRootRef = useRef(null);
@@ -904,7 +971,14 @@
 
             <div className="space-y-6 mt-6">
               {(tab==="Checklist"?SECTIONS:ANNEXURE_SECTIONS.filter(x=>x.code===tab)).map(s => (
-                <SectionCard key={s.code} section={s} state={answers} setState={setAnswers} onFieldChange={onFieldChange} typingMap={typingMap}/>
+                <SectionCard
+                  key={s.code}
+                  section={s}
+                  state={answers}
+                  setState={setAnswers}
+                  onFieldChange={onFieldChange}
+                  typingMap={typingMap}
+                />
               ))}
             </div>
 
@@ -991,7 +1065,6 @@
         </>
       );
     }
-
     // ---------- Auth screens ----------
     function AuthScreen(){
       const [tab, setTab] = useState("login");
@@ -1003,13 +1076,22 @@
 
       async function handleLogin(e){
         e?.preventDefault(); setLoading(true); setError(null);
-        try { if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted."); await auth().signInWithEmailAndPassword(email, password); }
-        catch(err){ setError(err.message||String(err)); } finally { setLoading(false); }
+        try {
+          if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted.");
+          await auth().signInWithEmailAndPassword(email, password);
+        } catch(err){
+          setError(err.message||String(err));
+        } finally { setLoading(false); }
       }
       async function handleSignup(e){
         e?.preventDefault(); setLoading(true); setError(null);
-        try { if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted."); const cred=await auth().createUserWithEmailAndPassword(email, password); if(name&&cred.user) await cred.user.updateProfile({displayName:name}); }
-        catch(err){ setError(err.message||String(err)); } finally { setLoading(false); }
+        try {
+          if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted.");
+          const cred=await auth().createUserWithEmailAndPassword(email, password);
+          if(name&&cred.user) await cred.user.updateProfile({displayName:name});
+        } catch(err){
+          setError(err.message||String(err));
+        } finally { setLoading(false); }
       }
 
       return (
@@ -1065,8 +1147,12 @@
             setState({ loading: false, user: null, allowed: false });
           } else {
             const ok = await isAllowlisted(user.email || "");
-            if (!ok) { try { await auth().signOut(); } catch {} setState({ loading: false, user: null, allowed: false }); }
-            else { setState({ loading: false, user, allowed: true }); }
+            if (!ok) {
+              try { await auth().signOut(); } catch {}
+              setState({ loading: false, user: null, allowed: false });
+            } else {
+              setState({ loading: false, user, allowed: true });
+            }
           }
         });
       },[]);
