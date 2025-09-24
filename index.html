@@ -289,7 +289,8 @@
       );
     }
 
-    function SectionCard({ section, state, setState, onFieldChange, typingMap }){
+    // ---------- Section card with LIVE SYNC (dropdown + notes) ----------
+    function SectionCard({ section, state, setState, onFieldChange, typingMap, pushNow }){
       return (
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
@@ -310,8 +311,12 @@
                       value={row.v}
                       onChange={e=>{
                         const val = e.target.value;
+                        // local update
                         setState(s=>({...s,[key]:{...s[key],v:val}}));
+                        // higher-level hook (typing/debounce path)
                         onFieldChange && onFieldChange({type:'answer', key, sub:'v', val});
+                        // 🔑 immediate field-level Firestore write for bulletproof live sync
+                        pushNow && pushNow({ [`answers.${key}.v`]: val });
                       }}
                       className="w-full rounded-xl border px-3 py-2"
                     >
@@ -324,8 +329,12 @@
                       value={row.note||""}
                       onChange={e=>{
                         const val = e.target.value;
+                        // local update
                         setState(s=>({...s,[key]:{...s[key],note:val}}));
+                        // higher-level hook (typing indicator + debounce)
                         onFieldChange && onFieldChange({type:'answer', key, sub:'note', val, typing:true});
+                        // 🔑 immediate field-level Firestore write for notes
+                        pushNow && pushNow({ [`answers.${key}.note`]: val });
                       }}
                       onFocus={()=>onFieldChange && onFieldChange({type:'typing', key, sub:'note', on:true})}
                       onBlur ={()=>onFieldChange && onFieldChange({type:'typing', key, sub:'note', on:false})}
@@ -344,6 +353,7 @@
         </div>
       );
     }
+
     // ------- Print header & helpers -------
     function PdfHeader(){
       return (
@@ -369,7 +379,7 @@
         return `${i+1}. ${pair}`;
       }).join(" ; ");
     }
-    function MetaTablePrint({ meta }){
+   function MetaTablePrint({ meta }){
       return (
         <table className="meta" style={{width:'100%', borderCollapse:'collapse', marginTop:8}}>
           <tbody>
@@ -521,6 +531,8 @@
         t=setTimeout(()=>{ const p=pending; pending=null; fn(p); }, wait);
       };
     }
+
+    // ============= MAIN APP =============
     function ChecklistApp({ userEmail }){
       const [meta,setMeta]=useState({hospital:"",address:"",visitDates:"",assessor:""});
       const [answers,setAnswers]=useState({});
@@ -538,31 +550,36 @@
       const [whoTypingTop, setWhoTypingTop] = useState([]); // overall typing
 
       const userEmailLower = (userEmail||"").toLowerCase();
-      const SESSION_KEY = 'kscce-live-session-' + (userEmailLower || 'anon');
 
       // local persistence
       const storageKey = 'kscce-' + VERSION + '-' + (userEmail || "local");
+      const sessionKey = 'kscce-session-' + (userEmail || "local");
+
       useEffect(()=>{
         const raw=localStorage.getItem(storageKey);
         if(raw){ try{ const p=JSON.parse(raw); setMeta(p.meta||{}); setAnswers(p.answers||{}); }catch{} }
-      },[]);
-      useEffect(()=>{
-        localStorage.setItem(storageKey,JSON.stringify({meta,answers}));
-        setLastEdited(new Date().toLocaleString());
-      },[meta,answers]);
-
-      // Restore live session across refresh
-      useEffect(()=>{
-        const sid = localStorage.getItem(SESSION_KEY);
-        if (sid && !liveSessionId) {
-          attachLiveSession(sid).then(()=>{
-            setLiveSessionId(sid);
-          }).catch(()=>{
-            try { localStorage.removeItem(SESSION_KEY); } catch {}
-          });
+        // Try to resume previous live session
+        const sid = localStorage.getItem(sessionKey);
+        if (sid) {
+          setLiveSessionId(sid);
+          attachLiveSession(sid); // best-effort reattach (if still permitted)
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       },[]);
+      useEffect(()=>{ localStorage.setItem(storageKey,JSON.stringify({meta,answers})); setLastEdited(new Date().toLocaleString()); },[meta,answers]);
+
+      // ---------- Immediate field writer for rock-solid sync ----------
+      const pushNow = async (fieldMap)=>{
+        if(!liveSessionId) return;
+        try{
+          const updates = {
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            lastWriter: userEmailLower,
+            ...fieldMap
+          };
+          await db().collection(ASSESS_COLL).doc(liveSessionId).set(updates, { merge: true });
+        }catch(e){ console.warn("pushNow failed", e); }
+      };
 
       function saveLocal(){
         const data = JSON.stringify({version:VERSION, meta, answers}, null, 2);
@@ -602,6 +619,7 @@
 
       async function startPresence(sessionId){
         if(!sessionId) return;
+        // heartbeat writer
         clearInterval(presenceTimer.current);
         presenceTimer.current = setInterval(async ()=>{
           try{
@@ -612,6 +630,7 @@
             }, { merge: true });
           }catch(e){ console.warn("presence heartbeat fail", e); }
         }, PRESENCE_HEARTBEAT_MS);
+        // initial write immediately
         try{
           await db().collection(PRESENCE_COLL).doc(safeId(userEmailLower)).set({
             email: userEmailLower,
@@ -619,11 +638,12 @@
             lastActive: firebase.firestore.FieldValue.serverTimestamp()
           }, { merge: true });
         }catch(e){}
+        // subscribe to presence docs in this session
         presenceUnsub.current && presenceUnsub.current();
         presenceUnsub.current = db().collection(PRESENCE_COLL).where('sessionId','==',sessionId).onSnapshot(snap=>{
           const now = Date.now();
           const online = [];
-          const typingEntries = [];
+          const typingEntries = []; // {email, key, sub}
           const keyToEmails = {};
           snap.forEach(doc=>{
             const d = doc.data();
@@ -659,37 +679,29 @@
       // ----- Live session (subscribe to the assessment doc) -----
       const remoteApplyingRef = useRef(false);
       const assessUnsub = useRef(null);
-
       async function attachLiveSession(id){
         if(!id) return;
+        // persist session id for refresh-resume
+        localStorage.setItem(sessionKey, id);
+        setLiveSessionId(id);
 
+        // subscribe doc
         assessUnsub.current && assessUnsub.current();
         assessUnsub.current = db().collection(ASSESS_COLL).doc(id).onSnapshot(doc=>{
           const data = doc.data();
           if(!data) return;
-
-          // 🔒 prevent echo & flicker
-          if (doc.metadata && doc.metadata.hasPendingWrites) return;
-          if (data.lastWriter && data.lastWriter === userEmailLower) return;
-
           remoteApplyingRef.current = true;
           try {
-            if (data.meta) {
-              setMeta(prev => ({ ...prev, ...(data.meta || {}) }));
-            }
-            if (data.answers) {
-              setAnswers(prev => ({ ...prev, ...(data.answers || {}) }));
-            }
+            if(data.meta) setMeta(data.meta);
+            if(data.answers) setAnswers(data.answers);
             setLiveParticipants(Array.isArray(data.participants)? data.participants : []);
           } finally {
             setTimeout(()=>{ remoteApplyingRef.current = false; }, 0);
           }
         }, err=>console.warn(err));
-
+        // presence start
         await startPresence(id);
-        try { localStorage.setItem(SESSION_KEY, id); } catch {}
       }
-
       async function detachLiveSession(removeFromParticipants){
         assessUnsub.current && assessUnsub.current();
         assessUnsub.current = null;
@@ -703,16 +715,14 @@
             }, { merge: true });
           }catch(e){ console.warn(e); }
         }
+        // clear persisted session id
+        localStorage.removeItem(sessionKey);
         setLiveSessionId(null);
         setTypingMap({});
         setWhoTypingTop([]);
-        try { localStorage.removeItem(SESSION_KEY); } catch {}
       }
 
       // ----- Debounced push to Firestore -----
-      const debouncedPush = useRef(null);
-      useEffect(()=>{
-// ----- Debounced push to Firestore -----
       const debouncedPush = useRef(null);
       useEffect(()=>{
         debouncedPush.current = makeDebounced(async (patch)=>{
@@ -722,73 +732,48 @@
               updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
               lastWriter: userEmailLower
             };
-
-            // Meta = write whole object (safe)
-            if (patch.meta){
+            if(patch.meta){
               Object.assign(updates, { meta: patch.meta });
             }
-
-            // ✅ NEW: answersPath = field-level updates (e.g., answers.A-ic-measures.v)
-            if (patch.answersPath){
-              for (const [subPath, val] of Object.entries(patch.answersPath)){
-                updates[`answers.${subPath}`] = val;
-              }
-            }
-
-            // (Back-compat) If someone still passes full answers blocks,
-            // we keep it — but field-level writes above are the new default.
-            if (patch.answers){
-              for (const [k,v] of Object.entries(patch.answers)){
+            if(patch.answers){
+              for(const [k,v] of Object.entries(patch.answers)){
                 updates[`answers.${k}`] = v;
               }
             }
-
             await db().collection(ASSESS_COLL).doc(liveSessionId).set(updates, { merge: true });
           }catch(e){ console.warn("Sync failed", e); }
         }, WRITE_DEBOUNCE_MS);
       },[liveSessionId, userEmailLower]);
 
-      // ----- Hook for changes/typing (edited) -----
+      // Hook for changes/typing
       function onFieldChange(evt){
-// ----- Hook for changes/typing (field-level for answers) -----
-      function onFieldChange(evt){
-        if (evt.type === 'answer') {
-          const k = evt.key;             // e.g., "A-ic-measures"
-          const sub = evt.sub;           // "v" or "note"
-          const val = evt.val;
-
-          // Local optimistic update
-          setAnswers(s => {
-            const existing = s[k] || {};
-            return { ...s, [k]: { ...existing, [sub]: val } };
-          });
-
-          // Remote field-level update (only the one subfield)
-          if (liveSessionId && !remoteApplyingRef.current) {
-            debouncedPush.current && debouncedPush.current({
-              answersPath: { [`${k}.${sub}`]: val }
-            });
-            if (evt.typing) setTypingState(k, sub, true);
-          }
-
-        } else if (evt.type === 'typing') {
-          if (liveSessionId) setTypingState(evt.key, evt.sub, evt.on);
-
-        } else if (evt.type === 'meta') {
-          const patch = evt.patch || {};
-          // Local optimistic
-          setMeta(m => ({ ...m, ...patch }));
-          // Remote
-          if (liveSessionId && !remoteApplyingRef.current) {
-            debouncedPush.current && debouncedPush.current({ meta: patch });
-          }
+        if(!liveSessionId) return;         
+        if(remoteApplyingRef.current) return; 
+        if(evt.type === 'answer'){
+          const k = evt.key;
+          const existing = answers[k] || {};
+          const next = { ...existing, [evt.sub]: evt.val };
+          // local optimistic state (already done in SectionCard), but keep in case
+          setAnswers(s=>({...s, [k]: next}));
+          // debounced write
+          debouncedPush.current && debouncedPush.current({ answers: { [k]: next } });
+          // typing heartbeat if provided
+          if (evt.typing) setTypingState(k, evt.sub, true);
+        } else if(evt.type === 'typing'){
+          setTypingState(evt.key, evt.sub, evt.on);
+        } else if(evt.type === 'meta'){
+          const nextMeta = { ...evt.patch };
+          setMeta(nextMeta);
+          debouncedPush.current && debouncedPush.current({ meta: nextMeta });
         }
       }
 
+      // Meta wrapper to sync (used by HeaderFields)
       function onMetaChange(nextMeta){
-        if(liveSessionId && !remoteApplyingRef.current){
-          debouncedPush.current && debouncedPush.current({ meta: nextMeta });
-        }
+        if(!liveSessionId) return;
+        if(remoteApplyingRef.current) return;
+        setMeta(nextMeta);
+        debouncedPush.current && debouncedPush.current({ meta: nextMeta });
       }
 
       // Typing state in presence doc
@@ -814,6 +799,7 @@
         if(!(await isAllowlisted(to))){ alert("Recipient email is not registered/allowlisted."); return; }
 
         try{
+          // create assessment with only sender as participant
           const assessRef = await db().collection(ASSESS_COLL).add({
             version: VERSION,
             owner: userEmailLower,
@@ -823,6 +809,7 @@
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             lastWriter: userEmailLower
           });
+          // send invite referencing assessmentId
           await db().collection(INVITES_COLL).add({
             sender: userEmailLower,
             recipient: to,
@@ -831,9 +818,8 @@
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
           setInviteEmail("");
-          setLiveSessionId(assessRef.id);
+          // attach sender to live session
           await attachLiveSession(assessRef.id);
-          try { localStorage.setItem(SESSION_KEY, assessRef.id); } catch {}
           alert("Invite sent. Live session started.");
         }catch(e){
           console.warn(e);
@@ -854,42 +840,46 @@
             status: 'accepted',
             acceptedAt: firebase.firestore.FieldValue.serverTimestamp()
           });
+          // add recipient to participants
           await db().collection(ASSESS_COLL).doc(inv.assessmentId).set({
             participants: firebase.firestore.FieldValue.arrayUnion(userEmailLower),
             updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             lastWriter: userEmailLower
           }, { merge: true });
-          setLiveSessionId(inv.assessmentId);
           await attachLiveSession(inv.assessmentId);
-          try { localStorage.setItem(SESSION_KEY, inv.assessmentId); } catch {}
           setShowTeam(false);
           alert("Joined live session.");
         }catch(e){ console.warn(e); alert("Failed to accept invite."); }
       }
-
-      // ----- New assessment / Leave session -----
+     // ----- New assessment / Leave session -----
       async function newAssessment(){
-        if(!confirm('This starts a new assessment and will CLEAR all fields. Continue?')) return;
-        await detachLiveSession(true);
-        const freshMeta = {hospital:'',address:"",visitDates:"",assessor:"", assessors:[{name:"", role:""}]};
-        setMeta(freshMeta);
-        setAnswers({});
-        try { localStorage.removeItem(storageKey); } catch {}
+        if(confirm('This starts a NEW assessment and will CLEAR all fields. Continue?')){
+          // If currently in a live session, leave it (remove me from participants)
+          await detachLiveSession(true);
+          // Clear all local state
+          setMeta({hospital:'',address:'',visitDates:'',assessor:'', assessors:[{name:'',role:''}]});
+          setAnswers({});
+          // Also clear local storage snapshot (but keep auth)
+          try { localStorage.removeItem(storageKey); } catch(e){}
+        }
       }
       async function leaveLiveSession(){
         if(!liveSessionId){ return; }
+        // Leave collaboration but KEEP current form values locally
         await detachLiveSession(true);
       }
 
       // ----- Export helpers -----
       const nonCompliances = useMemo(()=>{
-        const out=[]; 
+        const out=[];
         for(const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){
           for(const it of s.items){
-            const k=s.code + '-' + it.id; 
-            if(answers[k]?.v==="No") out.push({section:s.code + ". " + s.title,item:it.text,note:answers[k]?.note||''}); 
+            const k = s.code + '-' + it.id;
+            if(answers[k]?.v === "No"){
+              out.push({section: s.code + ". " + s.title, item: it.text, note: answers[k]?.note||''});
+            }
           }
-        } 
+        }
         return out;
       },[answers]);
 
@@ -1056,6 +1046,7 @@
         </>
       );
     }
+
     // ---------- Auth screens ----------
     function AuthScreen(){
       const [tab, setTab] = useState("login");
@@ -1067,22 +1058,13 @@
 
       async function handleLogin(e){
         e?.preventDefault(); setLoading(true); setError(null);
-        try {
-          if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted.");
-          await auth().signInWithEmailAndPassword(email, password);
-        } catch(err){
-          setError(err.message||String(err));
-        } finally { setLoading(false); }
+        try { if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted."); await auth().signInWithEmailAndPassword(email, password); }
+        catch(err){ setError(err.message||String(err)); } finally { setLoading(false); }
       }
       async function handleSignup(e){
         e?.preventDefault(); setLoading(true); setError(null);
-        try {
-          if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted.");
-          const cred=await auth().createUserWithEmailAndPassword(email, password);
-          if(name&&cred.user) await cred.user.updateProfile({displayName:name});
-        } catch(err){
-          setError(err.message||String(err));
-        } finally { setLoading(false); }
+        try { if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted."); const cred=await auth().createUserWithEmailAndPassword(email, password); if(name&&cred.user) await cred.user.updateProfile({displayName:name}); }
+        catch(err){ setError(err.message||String(err)); } finally { setLoading(false); }
       }
 
       return (
@@ -1140,7 +1122,6 @@
             const ok = await isAllowlisted(user.email || "");
             if (!ok) { try { await auth().signOut(); } catch {} setState({ loading: false, user: null, allowed: false }); }
             else { setState({ loading: false, user, allowed: true }); }
-
           }
         });
       },[]);
@@ -1153,4 +1134,4 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
   </script>
 </body>
-</html>
+</html> 
