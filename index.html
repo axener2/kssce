@@ -289,8 +289,7 @@
       );
     }
 
-    // ---------- Section card with LIVE SYNC (dropdown + notes) ----------
-    function SectionCard({ section, state, setState, onFieldChange, typingMap, pushNow }){
+    function SectionCard({ section, state, setState, onFieldChange, typingMap }){
       return (
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
@@ -311,12 +310,8 @@
                       value={row.v}
                       onChange={e=>{
                         const val = e.target.value;
-                        // local update
                         setState(s=>({...s,[key]:{...s[key],v:val}}));
-                        // higher-level hook (typing/debounce path)
                         onFieldChange && onFieldChange({type:'answer', key, sub:'v', val});
-                        // 🔑 immediate field-level Firestore write for bulletproof live sync
-                        pushNow && pushNow({ [`answers.${key}.v`]: val });
                       }}
                       className="w-full rounded-xl border px-3 py-2"
                     >
@@ -329,12 +324,63 @@
                       value={row.note||""}
                       onChange={e=>{
                         const val = e.target.value;
-                        // local update
                         setState(s=>({...s,[key]:{...s[key],note:val}}));
-                        // higher-level hook (typing indicator + debounce)
                         onFieldChange && onFieldChange({type:'answer', key, sub:'note', val, typing:true});
-                        // 🔑 immediate field-level Firestore write for notes
-                        pushNow && pushNow({ [`answers.${key}.note`]: val });
+                      }}
+                      onFocus={()=>onFieldChange && onFieldChange({type:'typing', key, sub:'note', on:true})}
+                      onBlur ={()=>onFieldChange && onFieldChange({type:'typing', key, sub:'note', on:false})}
+                      placeholder="Notes / remarks" className="w-full rounded-xl border px-3 py-2"
+                    />
+                    {whoTyping && whoTyping.length ? (
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        {whoTyping.map(e=>e.split('@')[0]).join(', ')} typing…
+                      </div>
+                    ): null}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      );
+    }
+   function AnnexureCard({ annex, state, setState, onFieldChange, typingMap }){
+      return (
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+            <div className="font-semibold text-slate-900 tracking-wide">{annex.code}. {annex.title}</div>
+          </div>
+          <div className="divide-y">
+            {annex.items.map((it,idx)=>{
+              const key=annex.code+'-'+it.id;
+              const row=state[key]||{v:"",note:""};
+              const whoTyping = typingMap[key];
+              return (
+                <div key={key} className="p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
+                  <div className="md:col-span-7 text-slate-800">
+                    <span className="text-slate-400 mr-2">{idx+1}.</span>{it.text}
+                  </div>
+                  <div className="md:col-span-2">
+                    <select
+                      value={row.v}
+                      onChange={e=>{
+                        const val=e.target.value;
+                        setState(s=>({...s,[key]:{...s[key],v:val}}));
+                        onFieldChange && onFieldChange({type:'answer', key, sub:'v', val});
+                      }}
+                      className="w-full rounded-xl border px-3 py-2"
+                    >
+                      <option value="">Select</option>
+                      {YNN.map(x=>(<option key={x} value={x}>{x}</option>))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-3">
+                    <input
+                      value={row.note||""}
+                      onChange={e=>{
+                        const val=e.target.value;
+                        setState(s=>({...s,[key]:{...s[key],note:val}}));
+                        onFieldChange && onFieldChange({type:'answer', key, sub:'note', val, typing:true});
                       }}
                       onFocus={()=>onFieldChange && onFieldChange({type:'typing', key, sub:'note', on:true})}
                       onBlur ={()=>onFieldChange && onFieldChange({type:'typing', key, sub:'note', on:false})}
@@ -354,232 +400,446 @@
       );
     }
 
-    // ------- Print header & helpers -------
-    function PdfHeader(){
-      return (
-        <div>
-          <div style={{fontWeight:700, textAlign:'center'}}>KERALA STATE COUNCIL FOR CLINICAL ESTABLISHMENTS</div>
-          <div style={{fontSize:12, textAlign:'center', lineHeight:1.35, marginTop:4}}>
-            2nd Floor, Hostel Block of Kerala State Institute of Health and Family Welfare, Thycaud, Thiruvananthapuram -14<br/>
-            Phone: 0471-2966523, e-mail: kscce2018@gmail.com<br/>
-            Website: www.clinicalestablishments.kerala.gov.in
+    // ---------------- Firestore Sync ----------------
+    const debouncedPush = { current: null };
+    let pushTimer=null, pendingPatch=null;
+    function setupDebouncedPush(liveSessionId, userEmailLower){
+      debouncedPush.current = (patch)=>{
+        if(!liveSessionId) return;
+        pendingPatch = {...(pendingPatch||{}), ...patch};
+        clearTimeout(pushTimer);
+        pushTimer=setTimeout(async()=>{
+          const update={ updatedAt: firebase.firestore.FieldValue.serverTimestamp(), lastWriter:userEmailLower };
+          if(pendingPatch.meta){
+            update['meta']=pendingPatch.meta;
+          }
+          if(pendingPatch.answers){
+            for(const [k,v] of Object.entries(pendingPatch.answers)){
+              for(const [sub,val] of Object.entries(v)){
+                update[`answers.${k}.${sub}`]=val;
+              }
+            }
+          }
+          try{
+            await db().collection(ASSESS_COLL).doc(liveSessionId).set(update,{merge:true});
+          }catch(e){console.warn("push failed",e);}
+          pendingPatch=null;
+        },WRITE_DEBOUNCE_MS);
+      };
+    }
+
+    // ---------------- Presence ----------------
+    let presenceInterval=null;
+    async function startPresence(liveSessionId,userEmailLower){
+      if(!liveSessionId) return;
+      const ref=db().collection(PRESENCE_COLL).doc(liveSessionId+'_'+safeId(userEmailLower));
+      async function hb(){
+        try{await ref.set({email:userEmailLower,lastActive:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});}
+        catch(e){console.warn(e);}
+      }
+      await hb();
+      presenceInterval=setInterval(hb,PRESENCE_HEARTBEAT_MS);
+    }
+    async function stopPresence(userEmailLower){
+      if(presenceInterval) clearInterval(presenceInterval);
+      presenceInterval=null;
+    }
+
+    // ---------------- Main App ----------------
+    function App(){
+      const [user,setUser]=useState(null);
+      const [meta,setMeta]=useState({});
+      const [answers,setAnswers]=useState({});
+      const [typingMap,setTypingMap]=useState({});
+      const [liveParticipants,setLiveParticipants]=useState([]);
+      const [liveSessionId,setLiveSessionId]=useState(localStorage.getItem("liveSessionId")||null);
+      const [whoTypingTop,setWhoTypingTop]=useState([]);
+
+      const remoteApplyingRef=useRef(false);
+      const assessUnsub=useRef(null);
+
+      useEffect(()=>{
+        return auth().onAuthStateChanged(async u=>{
+          if(u){
+            const ok=await isAllowlisted(u.email);
+            if(!ok){ alert("Not allowlisted"); await auth().signOut(); return; }
+            setUser(u);
+          } else setUser(null);
+        });
+      },[]);
+
+      useEffect(()=>{
+        if(user && liveSessionId){
+          attachLiveSession(liveSessionId,user.email);
+          setupDebouncedPush(liveSessionId,user.email.toLowerCase());
+        }
+        return ()=>{ assessUnsub.current && assessUnsub.current(); };
+      },[user,liveSessionId]);
+
+      async function attachLiveSession(id,email){
+        if(!id) return;
+        assessUnsub.current && assessUnsub.current();
+        assessUnsub.current=db().collection(ASSESS_COLL).doc(id).onSnapshot(doc=>{
+          const data=doc.data();
+          if(!data) return;
+          remoteApplyingRef.current=true;
+          try{
+            if(data.meta) setMeta(data.meta);
+            if(data.answers) setAnswers(data.answers);
+            setLiveParticipants(Array.isArray(data.participants)?data.participants:[]);
+          }finally{
+            setTimeout(()=>{remoteApplyingRef.current=false;},0);
+          }
+        });
+        await startPresence(id,email.toLowerCase());
+        localStorage.setItem("liveSessionId",id);
+      }
+
+      async function detachLiveSession(remove){
+        assessUnsub.current && assessUnsub.current();
+        assessUnsub.current=null;
+        await stopPresence(user.email.toLowerCase());
+        if(liveSessionId && remove){
+          try{
+            await db().collection(ASSESS_COLL).doc(liveSessionId).set({
+              participants: firebase.firestore.FieldValue.arrayRemove(user.email.toLowerCase()),
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+              lastWriter:user.email.toLowerCase()
+            },{merge:true});
+          }catch(e){console.warn(e);}
+        }
+        setLiveSessionId(null);
+        localStorage.removeItem("liveSessionId");
+        setTypingMap({});
+        setWhoTypingTop([]);
+      }
+
+      function setTypingState(key,sub,on){
+        setTypingMap(m=>{
+          const prev=m[key]||[];
+          let next=prev;
+          if(on && !prev.includes(user.email)) next=[...prev,user.email];
+          if(!on) next=prev.filter(x=>x!==user.email);
+          return {...m,[key]:next};
+        });
+      }
+
+      function onFieldChange(evt){
+        if(!liveSessionId) return;
+        if(remoteApplyingRef.current) return;
+        if(evt.type==='answer'){
+          const k=evt.key;
+          const next={ [evt.sub]:evt.val };
+          debouncedPush.current && debouncedPush.current({answers:{[k]:next}});
+          if(evt.typing) setTypingState(k,evt.sub,true);
+        }else if(evt.type==='typing'){
+          setTypingState(evt.key,evt.sub,evt.on);
+        }else if(evt.type==='meta'){
+          const nextMeta={...evt.patch};
+          debouncedPush.current && debouncedPush.current({meta:nextMeta});
+        }
+      }
+      // ---------- Export helpers ----------
+      const fullRootRef = useRef(null);
+      const nonRootRef  = useRef(null);
+      const [lastEdited,setLastEdited] = useState("");
+
+      useEffect(()=>{
+        fullRootRef.current = ReactDOM.createRoot(document.getElementById('sheet-full'));
+        nonRootRef.current  = ReactDOM.createRoot(document.getElementById('sheet-noncomp'));
+        return ()=>{ try{ fullRootRef.current?.unmount(); }catch{} try{ nonRootRef.current?.unmount(); }catch{} };
+      },[]);
+
+      useEffect(()=>{
+        // local autosave (per user)
+        const key='kscce-'+VERSION+'-'+(user?.email||'local');
+        localStorage.setItem(key, JSON.stringify({meta,answers}));
+        setLastEdited(new Date().toLocaleString());
+      },[meta,answers,user]);
+
+      const YNN = ["Yes","No","N/A"];
+
+      function formatAssessorsList(metaIn){
+        const arr = Array.isArray(metaIn.assessors) ? metaIn.assessors
+                  : (metaIn.assessor ? [{ name: metaIn.assessor, role: metaIn.assessorRole || "" }] : []);
+        const cleaned = arr.filter(a => (a?.name||"").trim() || (a?.role||"").trim());
+        if (!cleaned.length) return "";
+        return cleaned.map((a,i)=>{
+          const nm = (a?.name||"").trim();
+          const rl = (a?.role||"").trim();
+          const pair = [nm, rl].filter(Boolean).join(", ");
+          return `${i+1}. ${pair}`;
+        }).join(" ; ");
+      }
+
+      function PdfHeader(){
+        return (
+          <div>
+            <div style={{fontWeight:700, textAlign:'center'}}>KERALA STATE COUNCIL FOR CLINICAL ESTABLISHMENTS</div>
+            <div style={{fontSize:12, textAlign:'center', lineHeight:1.35, marginTop:4}}>
+              2nd Floor, Hostel Block of Kerala State Institute of Health and Family Welfare, Thycaud, Thiruvananthapuram -14<br/>
+              Phone: 0471-2966523, e-mail: kscce2018@gmail.com<br/>
+              Website: www.clinicalestablishments.kerala.gov.in
+            </div>
           </div>
-        </div>
-      );
-    }
-    function formatAssessorsList(meta){
-      const arr = Array.isArray(meta.assessors) ? meta.assessors
-                : (meta.assessor ? [{ name: meta.assessor, role: meta.assessorRole || "" }] : []);
-      const cleaned = arr.filter(a => (a?.name||"").trim() || (a?.role||"").trim());
-      if (!cleaned.length) return "";
-      return cleaned.map((a,i)=>{
-        const nm = (a?.name||"").trim();
-        const rl = (a?.role||"").trim();
-        const pair = [nm, rl].filter(Boolean).join(", ");
-        return `${i+1}. ${pair}`;
-      }).join(" ; ");
-    }
-   function MetaTablePrint({ meta }){
-      return (
-        <table className="meta" style={{width:'100%', borderCollapse:'collapse', marginTop:8}}>
-          <tbody>
-            <tr>
-              <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', width:'30%', fontWeight:600}}>Name & Address of the Hospital:</td>
-              <td style={{border:'1px solid #cbd5e1', padding:'6px 8px'}}>{(meta.hospital||"") + (meta.address? (", " + meta.address) : "")}</td>
-            </tr>
-            <tr>
-              <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', fontWeight:600}}>Date(s) of Visit:</td>
-              <td style={{border:'1px solid #cbd5e1', padding:'6px 8px'}}>{meta.visitDates || ""}</td>
-            </tr>
-            <tr>
-              <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', fontWeight:600}}>Name of Assessors:</td>
-              <td style={{border:'1px solid #cbd5e1', padding:'6px 8px'}}>{formatAssessorsList(meta)}</td>
-            </tr>
-          </tbody>
-        </table>
-      );
-    }
-    function KscceTitle({ text }){ return (<div style={{fontWeight:700, margin:'10px 0 6px'}}>{text}</div>); }
-    function FullReport({ meta, answers }){
-      return (
-        <div className="p-6 text-slate-900">
-          <PdfHeader/><KscceTitle text="Checklist for Hospital" /><MetaTablePrint meta={meta} />
-          {[...SECTIONS, ...ANNEXURE_SECTIONS].map(s=> (
-            <div key={s.code} style={{marginTop:14, breakInside:'avoid'}}>
-              <div style={{fontWeight:600, margin:'6px 0'}}>{s.code}. {s.title}</div>
-              <table style={{borderCollapse:'collapse', width:'100%'}}>
+        );
+      }
+
+      function MetaTablePrint({ meta: m }){
+        return (
+          <table className="meta" style={{width:'100%', borderCollapse:'collapse', marginTop:8}}>
+            <tbody>
+              <tr>
+                <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', width:'30%', fontWeight:600}}>Name & Address of the Hospital:</td>
+                <td style={{border:'1px solid #cbd5e1', padding:'6px 8px'}}>{(m.hospital||"") + (m.address? (", " + m.address) : "")}</td>
+              </tr>
+              <tr>
+                <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', fontWeight:600}}>Date(s) of Visit:</td>
+                <td style={{border:'1px solid #cbd5e1', padding:'6px 8px'}}>{m.visitDates || ""}</td>
+              </tr>
+              <tr>
+                <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', fontWeight:600}}>Name of Assessors:</td>
+                <td style={{border:'1px solid #cbd5e1', padding:'6px 8px'}}>{formatAssessorsList(m)}</td>
+              </tr>
+            </tbody>
+          </table>
+        );
+      }
+
+      function KscceTitle({ text }){ return (<div style={{fontWeight:700, margin:'10px 0 6px'}}>{text}</div>); }
+
+      function FullReport({ meta: m, answers: a }){
+        const ALL_SECTIONS=[...SECTIONS, ...ANNEXURE_SECTIONS];
+        return (
+          <div className="p-6 text-slate-900">
+            <PdfHeader/><KscceTitle text="Checklist for Hospital" /><MetaTablePrint meta={m} />
+            {ALL_SECTIONS.map(s=> (
+              <div key={s.code} style={{marginTop:14, breakInside:'avoid'}}>
+                <div style={{fontWeight:600, margin:'6px 0'}}>{s.code}. {s.title}</div>
+                <table style={{borderCollapse:'collapse', width:'100%'}}>
+                  <thead>
+                    <tr>
+                      <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'8%'}}>Sl. No.</th>
+                      <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left'}}>Item</th>
+                      <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'12%'}}>Answer</th>
+                      <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'30%'}}>Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.items.map((it, idx)=>{
+                      const key = s.code + '-' + it.id;
+                      const row = a[key] || {};
+                      return (
+                        <tr key={key}>
+                          <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{idx+1}</td>
+                          <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{it.text}</td>
+                          <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{row.v || ""}</td>
+                          <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{row.note || ""}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        );
+      }
+
+      function NonCompReport({ meta: m, answers: a }){
+        const rows=[];
+        for(const s of [...SECTIONS,...ANNEXURE_SECTIONS]){
+          for(const it of s.items){
+            const key=s.code+'-'+it.id;
+            const ans=a[key]?.v||"";
+            if(ans==="No") rows.push({section:s.code+". "+s.title,item:it.text,note:a[key]?.note||""});
+          }
+        }
+        return (
+          <div className="p-6 text-slate-900">
+            <PdfHeader/><KscceTitle text="Non-Compliance Report — Checklist (Hospital)" /><MetaTablePrint meta={m}/>
+            {rows.length ? (
+              <table style={{borderCollapse:'collapse', width:'100%', marginTop:8}}>
                 <thead>
                   <tr>
-                    <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'8%'}}>Sl. No.</th>
+                    <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'25%'}}>Section</th>
                     <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left'}}>Item</th>
-                    <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'12%'}}>Answer</th>
-                    <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'30%'}}>Notes</th>
+                    <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'35%'}}>Notes / Corrective Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {s.items.map((it, idx)=>{
-                    const key = s.code + '-' + it.id;
-                    const row = answers[key] || {};
-                    return (
-                      <tr key={key}>
-                        <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{idx+1}</td>
-                        <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{it.text}</td>
-                        <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{row.v || ""}</td>
-                        <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{row.note || ""}</td>
-                      </tr>
-                    );
-                  })}
+                  {rows.map((r,i)=>(
+                    <tr key={i}>
+                      <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{r.section}</td>
+                      <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{r.item}</td>
+                      <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{r.note}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-            </div>
-          ))}
-        </div>
-      );
-    }
-    function NonCompReport({ meta, answers }){
-      const rows = [];
-      for (const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){
-        for (const it of s.items){
-          const key=s.code + '-' + it.id;
-          const ans=answers[key]?.v||"";
-          if (ans === "No") rows.push({ section: s.code + ". " + s.title, item: it.text, note: answers[key]?.note||"" });
-        }
-      }
-      return (
-        <div className="p-6 text-slate-900">
-          <PdfHeader/><KscceTitle text="Non-Compliance Report — Checklist (Hospital)" /><MetaTablePrint meta={meta} />
-          {rows.length ? (
-            <table style={{borderCollapse:'collapse', width:'100%', marginTop:8}}>
-              <thead>
-                <tr>
-                  <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'25%'}}>Section</th>
-                  <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left'}}>Item</th>
-                  <th style={{border:'1px solid #cbd5e1', padding:'6px 8px', textAlign:'left', width:'35%'}}>Notes / Corrective Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r,i)=> (
-                  <tr key={i}>
-                    <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{r.section}</td>
-                    <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{r.item}</td>
-                    <td style={{border:'1px solid #cbd5e1', padding:'6px 8px', verticalAlign:'top'}}>{r.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (<p className="mt-3 text-sm">No items marked as "No".</p>)}
-        </div>
-      );
-    }
-
-    // ------- Print helpers -------
-    function openPrintWindow(innerHTML){
-      const css = `
-        body { font-family: Arial, Helvetica, sans-serif; color:#0f172a; margin:0; }
-        .wrap { padding: 18px 20px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 12px; vertical-align: top; }
-        thead th { background: #f1f5f9; }
-        .meta td { border: 1px solid #cbd5e1; padding: 6px 8px; }
-        h1, h2, h3 { margin: 0; }
-        @media print { .page-break { page-break-before: always; } }
-      `;
-      const w = window.open('', '_blank');
-      if (!w) { alert("Popup blocked. Allow popups to export."); return; }
-      w.document.open();
-      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>KSCCE Export</title><style>${css}</style></head><body><div class="wrap">${innerHTML}</div></body></html>`);
-      w.document.close();
-      setTimeout(()=>{ try { w.focus(); w.print(); } catch(e) {} }, 250);
-    }
-
-    // --------- Header & Tabs ---------
-    function HeaderBar({ email, tab, onTab, onSignOut }){
-      const TABS = ["Checklist","Annexure 1","Annexure 2","Annexure 3","Annexure 4"];
-      return (
-        <header className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b border-slate-200">
-          <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-teal-600 text-white grid place-items-center font-bold">KS</div>
-              <div>
-                <div className="font-semibold text-slate-900">KSCCE Hospital Checklist</div>
-                <div className="text-xs text-slate-500 leading-tight">{email ? `Logged in as ${email}` : "Assessor Portal"}</div>
-              </div>
-            </div>
-            <button onClick={onSignOut} className="px-3 py-1.5 rounded-full text-sm border bg-white text-slate-700">Sign out</button>
+            ) : (<p className="mt-3 text-sm">No items marked as "No".</p>)}
           </div>
-          <div className="border-t border-slate-200 bg-white/80 backdrop-blur">
-            <div className="max-w-6xl mx-auto px-3 py-2">
-              <div className="hide-scrollbar overflow-x-auto whitespace-nowrap">
-                <div className="inline-flex gap-2 min-w-full">
-                  {TABS.map(t => (
-                    <button key={t} onClick={()=>onTab(t)} className={`px-3 py-1.5 rounded-full text-sm border flex-shrink-0 ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>{t}</button>
-                  ))}
+        );
+      }
+
+      function openPrintWindow(innerHTML){
+        const css = `
+          body { font-family: Arial, Helvetica, sans-serif; color:#0f172a; margin:0; }
+          .wrap { padding: 18px 20px; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 12px; vertical-align: top; }
+          thead th { background: #f1f5f9; }
+          .meta td { border: 1px solid #cbd5e1; padding: 6px 8px; }
+          h1, h2, h3 { margin: 0; }
+          @media print { .page-break { page-break-before: always; } }
+        `;
+        const w = window.open('', '_blank');
+        if (!w) { alert("Popup blocked. Allow popups to export."); return; }
+        w.document.open();
+        w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>KSCCE Export</title><style>${css}</style></head><body><div class="wrap">${innerHTML}</div></body></html>`);
+        w.document.close();
+        setTimeout(()=>{ try { w.focus(); w.print(); } catch(e) {} }, 250);
+      }
+
+      function exportFull(){
+        const mount = document.getElementById('sheet-full');
+        fullRootRef.current.render(<FullReport meta={meta} answers={answers} />);
+        setTimeout(()=>{ const html = mount.innerHTML; fullRootRef.current.render(null); openPrintWindow(html); }, 40);
+      }
+      function exportNonComp(){
+        const mount = document.getElementById('sheet-noncomp');
+        nonRootRef.current.render(<NonCompReport meta={meta} answers={answers} />);
+        setTimeout(()=>{ const html = mount.innerHTML; nonRootRef.current.render(null); openPrintWindow(html); }, 40);
+      }
+
+      // ---------- UI helpers ----------
+      const btnBase = "rounded-xl border border-slate-200 bg-white text-slate-800 text-[13px] font-medium h-12 flex items-center justify-center shadow-sm active:scale-[0.99]";
+      const btnDark = "rounded-xl bg-slate-900 text-white text-[13px] font-medium h-12 flex items-center justify-center shadow";
+      const btnGreen= "rounded-xl bg-teal-600 text-white text-[13px] font-medium h-12 flex items-center justify-center shadow";
+      const btnRose = "rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-[13px] font-medium h-12 flex items-center justify-center";
+
+      function initials(email){ return (String(email||"?").trim()[0]||"?").toUpperCase(); }
+
+      function HeaderBar({ email, tab, onTab, onSignOut }){
+        const TABS=["Checklist","Annexure 1","Annexure 2","Annexure 3","Annexure 4"];
+        return (
+          <header className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b border-slate-200">
+            <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-teal-600 text-white grid place-items-center font-bold">KS</div>
+                <div>
+                  <div className="font-semibold text-slate-900">KSCCE Hospital Checklist</div>
+                  <div className="text-xs text-slate-500 leading-tight">{email ? `Logged in as ${email}` : "Assessor Portal"}</div>
+                </div>
+              </div>
+              <button onClick={onSignOut} className="px-3 py-1.5 rounded-full text-sm border bg-white text-slate-700">Sign out</button>
+            </div>
+            <div className="border-t border-slate-200 bg-white/80 backdrop-blur">
+              <div className="max-w-6xl mx-auto px-3 py-2">
+                <div className="hide-scrollbar overflow-x-auto whitespace-nowrap">
+                  <div className="inline-flex gap-2 min-w-full">
+                    {TABS.map(t=>(
+                      <button key={t} onClick={()=>onTab(t)} className={`px-3 py-1.5 rounded-full text-sm border flex-shrink-0 ${tab===t?"bg-teal-600 text-white border-teal-700":"bg-white text-slate-700 border-slate-200"}`}>{t}</button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </header>
-      );
-    }
+          </header>
+        );
+      }
 
-    // ---------- Debounce util ----------
-    function makeDebounced(fn, wait=WRITE_DEBOUNCE_MS){
-      let t=null, pending=null;
-      return (patch)=>{
-        pending = { ...(pending||{}), ...patch };
-        clearTimeout(t);
-        t=setTimeout(()=>{ const p=pending; pending=null; fn(p); }, wait);
-      };
-    }
-
-    // ============= MAIN APP =============
-    function ChecklistApp({ userEmail }){
-      const [meta,setMeta]=useState({hospital:"",address:"",visitDates:"",assessor:""});
-      const [answers,setAnswers]=useState({});
+      // ---------- Invite & team modal state ----------
       const [tab,setTab]=useState("Checklist");
-      const [lastEdited,setLastEdited]=useState("");
+      const [showTeam,setShowTeam]=useState(false);
+      const [inviteEmail,setInviteEmail]=useState("");
+      const [incomingInvites,setIncomingInvites]=useState([]);
+      const [outgoingInvites,setOutgoingInvites]=useState([]);
 
-      // Team + live
-      const [showTeam, setShowTeam] = useState(false);
-      const [inviteEmail, setInviteEmail] = useState("");
-      const [incomingInvites, setIncomingInvites] = useState([]);
-      const [outgoingInvites, setOutgoingInvites] = useState([]);
-      const [liveSessionId, setLiveSessionId] = useState(null);
-      const [liveParticipants, setLiveParticipants] = useState([]);
-      const [typingMap, setTypingMap] = useState({}); // key -> [emails]
-      const [whoTypingTop, setWhoTypingTop] = useState([]); // overall typing
-
-      const userEmailLower = (userEmail||"").toLowerCase();
-
-      // local persistence
-      const storageKey = 'kscce-' + VERSION + '-' + (userEmail || "local");
-      const sessionKey = 'kscce-session-' + (userEmail || "local");
-
+      // Subscribe invites
       useEffect(()=>{
-        const raw=localStorage.getItem(storageKey);
-        if(raw){ try{ const p=JSON.parse(raw); setMeta(p.meta||{}); setAnswers(p.answers||{}); }catch{} }
-        // Try to resume previous live session
-        const sid = localStorage.getItem(sessionKey);
-        if (sid) {
-          setLiveSessionId(sid);
-          attachLiveSession(sid); // best-effort reattach (if still permitted)
-        }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      },[]);
-      useEffect(()=>{ localStorage.setItem(storageKey,JSON.stringify({meta,answers})); setLastEdited(new Date().toLocaleString()); },[meta,answers]);
+        if(!user?.email) return;
+        const my=user.email.toLowerCase();
+        const qIn  = db().collection(INVITES_COLL).where('recipient','==',my).where('status','in',['pending']);
+        const qOut = db().collection(INVITES_COLL).where('sender','==',my).where('status','in',['pending']);
+        const unsubIn  = qIn.onSnapshot(s=>{ const a=[]; s.forEach(d=>a.push({id:d.id,...d.data()})); setIncomingInvites(a); }, e=>console.warn(e));
+        const unsubOut = qOut.onSnapshot(s=>{ const a=[]; s.forEach(d=>a.push({id:d.id,...d.data()})); setOutgoingInvites(a); }, e=>console.warn(e));
+        return ()=>{ try{unsubIn&&unsubIn();}catch{} try{unsubOut&&unsubOut();}catch{} };
+      },[user?.email]);
 
-      // ---------- Immediate field writer for rock-solid sync ----------
-      const pushNow = async (fieldMap)=>{
-        if(!liveSessionId) return;
+      async function sendCloudInvite(){
+        const to=(inviteEmail||"").trim().toLowerCase();
+        const me=user.email.toLowerCase();
+        if(!to){ alert("Enter recipient email"); return; }
+        if(to===me){ alert("You cannot invite yourself."); return; }
+        if(!(await isAllowlisted(to))){ alert("Recipient email is not registered/allowlisted."); return; }
+
         try{
-          const updates = {
+          // Create new assessment (snapshot current state)
+          const assessRef = await db().collection(ASSESS_COLL).add({
+            version: VERSION,
+            owner: me,
+            participants: [me],
+            meta, answers,
             updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            lastWriter: userEmailLower,
-            ...fieldMap
-          };
-          await db().collection(ASSESS_COLL).doc(liveSessionId).set(updates, { merge: true });
-        }catch(e){ console.warn("pushNow failed", e); }
-      };
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            lastWriter: me
+          });
+          await db().collection(INVITES_COLL).add({
+            sender: me, recipient: to, status:'pending',
+            assessmentId: assessRef.id,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          setInviteEmail("");
+          // join live session immediately
+          setLiveSessionId(assessRef.id);
+          setupDebouncedPush(assessRef.id, me);
+          await attachLiveSession(assessRef.id, user.email);
+          alert("Invite sent. Live session started.");
+        }catch(e){ console.warn(e); alert("Failed to send invite. Check connection/permissions."); }
+      }
+
+      async function withdrawInvite(id){
+        try{ await db().collection(INVITES_COLL).doc(id).update({status:'withdrawn'}); }
+        catch(e){ console.warn(e); alert("Could not withdraw invite."); }
+      }
+
+      async function acceptInvite(inv){
+        try{
+          if(!inv.assessmentId){ alert("Invalid invite (no session)."); return; }
+          await db().collection(INVITES_COLL).doc(inv.id).update({
+            status:'accepted',
+            acceptedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          await db().collection(ASSESS_COLL).doc(inv.assessmentId).set({
+            participants: firebase.firestore.FieldValue.arrayUnion(user.email.toLowerCase()),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            lastWriter: user.email.toLowerCase()
+          },{merge:true});
+          setLiveSessionId(inv.assessmentId);
+          setupDebouncedPush(inv.assessmentId, user.email.toLowerCase());
+          await attachLiveSession(inv.assessmentId, user.email);
+          setShowTeam(false);
+          alert("Joined live session.");
+        }catch(e){ console.warn(e); alert("Failed to accept invite."); }
+      }
+
+      async function leaveLive(){
+        if(!liveSessionId) return;
+        await detachLiveSession(true);
+      }
+
+      async function newAssessment(){
+        const ok = confirm("This starts a new assessment and will clear all fields. Continue?");
+        if(!ok) return;
+        // Leave any live session (but keep page)
+        await detachLiveSession(true);
+        setMeta({hospital:"",address:"",visitDates:"",assessor:""});
+        setAnswers({});
+      }
+
+      // --------- Derived UI helpers ---------
+      const onlineNow = [...new Set(liveParticipants)].filter(Boolean);
 
       function saveLocal(){
         const data = JSON.stringify({version:VERSION, meta, answers}, null, 2);
@@ -594,328 +854,27 @@
         r.readAsText(file); e.target.value='';
       }
 
-      // ----- Invites (pending lists) -----
-      useEffect(()=>{
-        if(!userEmailLower) return;
-        const qIn  = db().collection(INVITES_COLL)
-          .where('recipient','==',userEmailLower)
-          .where('status','in',['pending']);
-        const qOut = db().collection(INVITES_COLL)
-          .where('sender','==',userEmailLower)
-          .where('status','in',['pending']);
-        const unsubIn  = qIn.onSnapshot(snap=>{
-          const arr=[]; snap.forEach(doc=> arr.push({id:doc.id,...doc.data()})); setIncomingInvites(arr);
-        }, err=>console.warn(err));
-        const unsubOut = qOut.onSnapshot(snap=>{
-          const arr=[]; snap.forEach(doc=> arr.push({id:doc.id,...doc.data()})); setOutgoingInvites(arr);
-        }, err=>console.warn(err));
-        return ()=>{ try{unsubIn&&unsubIn();}catch{} try{unsubOut&&unsubOut();}catch{} };
-      },[userEmailLower]);
-
-      // ----- Presence -----
-      const presenceTimer = useRef(null);
-      const typingTimer = useRef(null);
-      const presenceUnsub = useRef(null);
-
-      async function startPresence(sessionId){
-        if(!sessionId) return;
-        // heartbeat writer
-        clearInterval(presenceTimer.current);
-        presenceTimer.current = setInterval(async ()=>{
-          try{
-            await db().collection(PRESENCE_COLL).doc(safeId(userEmailLower)).set({
-              email: userEmailLower,
-              sessionId,
-              lastActive: firebase.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
-          }catch(e){ console.warn("presence heartbeat fail", e); }
-        }, PRESENCE_HEARTBEAT_MS);
-        // initial write immediately
-        try{
-          await db().collection(PRESENCE_COLL).doc(safeId(userEmailLower)).set({
-            email: userEmailLower,
-            sessionId,
-            lastActive: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-        }catch(e){}
-        // subscribe to presence docs in this session
-        presenceUnsub.current && presenceUnsub.current();
-        presenceUnsub.current = db().collection(PRESENCE_COLL).where('sessionId','==',sessionId).onSnapshot(snap=>{
-          const now = Date.now();
-          const online = [];
-          const typingEntries = []; // {email, key, sub}
-          const keyToEmails = {};
-          snap.forEach(doc=>{
-            const d = doc.data();
-            const ts = d.lastActive?.toDate ? d.lastActive.toDate().getTime() : 0;
-            if (now - ts <= PRESENCE_STALE_MS) {
-              online.push(d.email);
-              if (d.typingKey) {
-                typingEntries.push({ email: d.email, key: d.typingKey, sub: d.typingSub||'' });
-                keyToEmails[d.typingKey] = (keyToEmails[d.typingKey]||[]).concat([d.email]);
-              }
-            }
-          });
-          setLiveParticipants(online);
-          setWhoTypingTop(typingEntries.map(t=>t.email));
-          setTypingMap(keyToEmails);
-        }, err=>console.warn(err));
-      }
-      async function stopPresence(){
-        clearInterval(presenceTimer.current);
-        presenceTimer.current = null;
-        presenceUnsub.current && presenceUnsub.current();
-        presenceUnsub.current = null;
-        try{
-          await db().collection(PRESENCE_COLL).doc(safeId(userEmailLower)).set({
-            sessionId: null,
-            typingKey: null,
-            typingSub: null,
-            lastActive: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-        }catch(e){}
-      }
-
-      // ----- Live session (subscribe to the assessment doc) -----
-      const remoteApplyingRef = useRef(false);
-      const assessUnsub = useRef(null);
-      async function attachLiveSession(id){
-        if(!id) return;
-        // persist session id for refresh-resume
-        localStorage.setItem(sessionKey, id);
-        setLiveSessionId(id);
-
-        // subscribe doc
-        assessUnsub.current && assessUnsub.current();
-        assessUnsub.current = db().collection(ASSESS_COLL).doc(id).onSnapshot(doc=>{
-          const data = doc.data();
-          if(!data) return;
-          remoteApplyingRef.current = true;
-          try {
-            if(data.meta) setMeta(data.meta);
-            if(data.answers) setAnswers(data.answers);
-            setLiveParticipants(Array.isArray(data.participants)? data.participants : []);
-          } finally {
-            setTimeout(()=>{ remoteApplyingRef.current = false; }, 0);
-          }
-        }, err=>console.warn(err));
-        // presence start
-        await startPresence(id);
-      }
-      async function detachLiveSession(removeFromParticipants){
-        assessUnsub.current && assessUnsub.current();
-        assessUnsub.current = null;
-        await stopPresence();
-        if (liveSessionId && removeFromParticipants) {
-          try{
-            await db().collection(ASSESS_COLL).doc(liveSessionId).set({
-              participants: firebase.firestore.FieldValue.arrayRemove(userEmailLower),
-              updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-              lastWriter: userEmailLower
-            }, { merge: true });
-          }catch(e){ console.warn(e); }
-        }
-        // clear persisted session id
-        localStorage.removeItem(sessionKey);
-        setLiveSessionId(null);
-        setTypingMap({});
-        setWhoTypingTop([]);
-      }
-
-      // ----- Debounced push to Firestore -----
-      const debouncedPush = useRef(null);
-      useEffect(()=>{
-        debouncedPush.current = makeDebounced(async (patch)=>{
-          if(!liveSessionId) return;
-          try{
-            const updates = {
-              updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-              lastWriter: userEmailLower
-            };
-            if(patch.meta){
-              Object.assign(updates, { meta: patch.meta });
-            }
-            if(patch.answers){
-              for(const [k,v] of Object.entries(patch.answers)){
-                updates[`answers.${k}`] = v;
-              }
-            }
-            await db().collection(ASSESS_COLL).doc(liveSessionId).set(updates, { merge: true });
-          }catch(e){ console.warn("Sync failed", e); }
-        }, WRITE_DEBOUNCE_MS);
-      },[liveSessionId, userEmailLower]);
-
-      // Hook for changes/typing
-      function onFieldChange(evt){
-        if(!liveSessionId) return;         
-        if(remoteApplyingRef.current) return; 
-        if(evt.type === 'answer'){
-          const k = evt.key;
-          const existing = answers[k] || {};
-          const next = { ...existing, [evt.sub]: evt.val };
-          // local optimistic state (already done in SectionCard), but keep in case
-          setAnswers(s=>({...s, [k]: next}));
-          // debounced write
-          debouncedPush.current && debouncedPush.current({ answers: { [k]: next } });
-          // typing heartbeat if provided
-          if (evt.typing) setTypingState(k, evt.sub, true);
-        } else if(evt.type === 'typing'){
-          setTypingState(evt.key, evt.sub, evt.on);
-        } else if(evt.type === 'meta'){
-          const nextMeta = { ...evt.patch };
-          setMeta(nextMeta);
-          debouncedPush.current && debouncedPush.current({ meta: nextMeta });
-        }
-      }
-
-      // Meta wrapper to sync (used by HeaderFields)
-      function onMetaChange(nextMeta){
-        if(!liveSessionId) return;
-        if(remoteApplyingRef.current) return;
-        setMeta(nextMeta);
-        debouncedPush.current && debouncedPush.current({ meta: nextMeta });
-      }
-
-      // Typing state in presence doc
-      async function setTypingState(key, sub, on){
-        clearTimeout(typingTimer.current);
-        try{
-          await db().collection(PRESENCE_COLL).doc(safeId(userEmailLower)).set({
-            typingKey: on ? key : null,
-            typingSub: on ? sub : null,
-            lastActive: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-        }catch(e){}
-        if (on) {
-          typingTimer.current = setTimeout(()=>setTypingState(key, sub, false), TYPING_IDLE_MS);
-        }
-      }
-
-      // ----- Invite flow -----
-      async function sendCloudInvite(){
-        const to = String(inviteEmail||"").trim().toLowerCase();
-        if(!to){ alert("Enter recipient email"); return; }
-        if(to===userEmailLower){ alert("You cannot invite yourself."); return; }
-        if(!(await isAllowlisted(to))){ alert("Recipient email is not registered/allowlisted."); return; }
-
-        try{
-          // create assessment with only sender as participant
-          const assessRef = await db().collection(ASSESS_COLL).add({
-            version: VERSION,
-            owner: userEmailLower,
-            participants: [userEmailLower],
-            meta, answers,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            lastWriter: userEmailLower
-          });
-          // send invite referencing assessmentId
-          await db().collection(INVITES_COLL).add({
-            sender: userEmailLower,
-            recipient: to,
-            status: 'pending',
-            assessmentId: assessRef.id,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-          });
-          setInviteEmail("");
-          // attach sender to live session
-          await attachLiveSession(assessRef.id);
-          alert("Invite sent. Live session started.");
-        }catch(e){
-          console.warn(e);
-          alert("Failed to send invite. Check connection/permissions.");
-        }
-      }
-
-      async function withdrawInvite(id){
-        try{
-          await db().collection(INVITES_COLL).doc(id).update({ status: 'withdrawn' });
-        }catch(e){ console.warn(e); alert("Could not withdraw invite."); }
-      }
-
-      async function acceptInvite(inv){
-        try{
-          if(!inv.assessmentId){ alert("Invalid invite (no session)."); return; }
-          await db().collection(INVITES_COLL).doc(inv.id).update({
-            status: 'accepted',
-            acceptedAt: firebase.firestore.FieldValue.serverTimestamp()
-          });
-          // add recipient to participants
-          await db().collection(ASSESS_COLL).doc(inv.assessmentId).set({
-            participants: firebase.firestore.FieldValue.arrayUnion(userEmailLower),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            lastWriter: userEmailLower
-          }, { merge: true });
-          await attachLiveSession(inv.assessmentId);
-          setShowTeam(false);
-          alert("Joined live session.");
-        }catch(e){ console.warn(e); alert("Failed to accept invite."); }
-      }
-     // ----- New assessment / Leave session -----
-      async function newAssessment(){
-        if(confirm('This starts a NEW assessment and will CLEAR all fields. Continue?')){
-          // If currently in a live session, leave it (remove me from participants)
-          await detachLiveSession(true);
-          // Clear all local state
-          setMeta({hospital:'',address:'',visitDates:'',assessor:'', assessors:[{name:'',role:''}]});
-          setAnswers({});
-          // Also clear local storage snapshot (but keep auth)
-          try { localStorage.removeItem(storageKey); } catch(e){}
-        }
-      }
-      async function leaveLiveSession(){
-        if(!liveSessionId){ return; }
-        // Leave collaboration but KEEP current form values locally
-        await detachLiveSession(true);
-      }
-
-      // ----- Export helpers -----
-      const nonCompliances = useMemo(()=>{
-        const out=[];
-        for(const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){
-          for(const it of s.items){
-            const k = s.code + '-' + it.id;
-            if(answers[k]?.v === "No"){
-              out.push({section: s.code + ". " + s.title, item: it.text, note: answers[k]?.note||''});
-            }
-          }
-        }
-        return out;
+      // ---------- Non-Compliance list live ----------
+      const nonCompliances = React.useMemo(()=>{
+        const out=[]; for(const s of [...SECTIONS, ...ANNEXURE_SECTIONS]){ for(const it of s.items){ const k=s.code + '-' + it.id; if(answers[k]?.v==="No") out.push({section:s.code + ". " + s.title,item:it.text,note:answers[k]?.note||''}); } } return out;
       },[answers]);
 
-      const fullRootRef = useRef(null);
-      const nonRootRef  = useRef(null);
-      useEffect(()=>{
-        fullRootRef.current = ReactDOM.createRoot(document.getElementById('sheet-full'));
-        nonRootRef.current  = ReactDOM.createRoot(document.getElementById('sheet-noncomp'));
-        return ()=>{ try{ fullRootRef.current?.unmount(); }catch{} try{ nonRootRef.current?.unmount(); }catch{} };
-      },[]);
+      // ---------- Render ----------
+      const userEmail = user?.email || "";
 
-      function exportFull(){
-        const mount = document.getElementById('sheet-full');
-        fullRootRef.current.render(<FullReport meta={meta} answers={answers} />);
-        setTimeout(()=>{ const html = mount.innerHTML; fullRootRef.current.render(null); openPrintWindow(html); }, 40);
+      if(!user){
+        return (
+          <div className="min-h-screen grid place-items-center bg-slate-50">
+            <div className="text-slate-500">Loading…</div>
+          </div>
+        );
       }
-      function exportNonComp(){
-        const mount = document.getElementById('sheet-noncomp');
-        nonRootRef.current.render(<NonCompReport meta={meta} answers={answers} />);
-        setTimeout(()=>{ const html = mount.innerHTML; nonRootRef.current.render(null); openPrintWindow(html); }, 40);
-      }
-
-      // Buttons
-      const btnBase = "rounded-xl border border-slate-200 bg-white text-slate-800 text-[13px] font-medium h-12 flex items-center justify-center shadow-sm active:scale-[0.99]";
-      const btnDark = "rounded-xl bg-slate-900 text-white text-[13px] font-medium h-12 flex items-center justify-center shadow";
-      const btnGreen= "rounded-xl bg-teal-600 text-white text-[13px] font-medium h-12 flex items-center justify-center shadow";
-      const btnRose = "rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-[13px] font-medium h-12 flex items-center justify-center";
-
-      const onlineNow = [...new Set(liveParticipants)].filter(Boolean);
 
       return (
         <>
           <HeaderBar email={userEmail} tab={tab} onTab={setTab} onSignOut={()=>auth().signOut()} />
 
           <main className="max-w-6xl mx-auto px-4 py-6">
-            {/* Toolbar */}
             <div className="mb-3 bg-white border border-slate-200 rounded-2xl shadow-sm p-3">
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <button onClick={exportFull} className={btnDark}>Export Full Report</button>
@@ -936,7 +895,6 @@
 
                 {liveSessionId && (
                   <div className="flex items-center gap-2">
-                    {/* Presence dots */}
                     <div className="flex -space-x-2">
                       {onlineNow.map(e=>(
                         <div key={e} className="relative w-7 h-7 rounded-full bg-teal-600 text-white grid place-items-center text-xs ring-2 ring-white">
@@ -947,20 +905,45 @@
                     </div>
                     <div className="text-xs text-slate-600">
                       Live: {onlineNow.length ? onlineNow.join(", ") : "…"}
-                      {whoTypingTop.length ? <span className="ml-2 text-slate-500">({[...new Set(whoTypingTop)].map(x=>x.split('@')[0]).join(', ')} typing…)</span> : null}
                     </div>
-                    <button onClick={leaveLiveSession} className="ml-2 rounded-full bg-white border px-3 py-1 text-xs text-slate-700">Leave</button>
+                    <button onClick={leaveLive} className="ml-2 rounded-full bg-white border px-3 py-1 text-xs text-slate-700">Leave</button>
                   </div>
                 )}
               </div>
             </div>
 
-            <HeaderFields value={meta} onChange={setMeta} onMetaChange={(m)=>onFieldChange({type:'meta', patch:m})} />
+            {/* Meta header fields */}
+            <HeaderFields
+              value={meta}
+              onChange={setMeta}
+              onMetaChange={(m)=>onFieldChange({type:'meta', patch:m})}
+            />
 
+            {/* Body: checklist or annexure */}
             <div className="space-y-6 mt-6">
-              {(tab==="Checklist"?SECTIONS:ANNEXURE_SECTIONS.filter(x=>x.code===tab)).map(s => (
-                <SectionCard key={s.code} section={s} state={answers} setState={setAnswers} onFieldChange={onFieldChange} typingMap={typingMap}/>
-              ))}
+              {tab==="Checklist" ? (
+                SECTIONS.map(s => (
+                  <SectionCard
+                    key={s.code}
+                    section={s}
+                    state={answers}
+                    setState={setAnswers}
+                    onFieldChange={onFieldChange}
+                    typingMap={typingMap}
+                  />
+                ))
+              ) : (
+                ANNEXURE_SECTIONS.filter(x=>x.code===tab).map(a => (
+                  <AnnexureCard
+                    key={a.code}
+                    annex={a}
+                    state={answers}
+                    setState={setAnswers}
+                    onFieldChange={onFieldChange}
+                    typingMap={typingMap}
+                  />
+                ))
+              )}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm mt-6">
@@ -1015,7 +998,7 @@
                     {/* Accept Collaboration */}
                     <div className="p-4">
                       <div className="font-medium mb-2">Accept Collaboration</div>
-                      <div className="text-sm text-slate-600 mb-2">Invites sent to you ({userEmailLower || "-"})</div>
+                      <div className="text-sm text-slate-600 mb-2">Invites sent to you ({userEmail.toLowerCase() || "-"})</div>
                       {incomingInvites.length ? (
                         <ul className="space-y-2">
                           {incomingInvites.map(inv=>(
@@ -1046,8 +1029,7 @@
         </>
       );
     }
-
-    // ---------- Auth screens ----------
+   // ---------- Auth screens ----------
     function AuthScreen(){
       const [tab, setTab] = useState("login");
       const [email, setEmail] = useState("");
@@ -1058,13 +1040,18 @@
 
       async function handleLogin(e){
         e?.preventDefault(); setLoading(true); setError(null);
-        try { if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted."); await auth().signInWithEmailAndPassword(email, password); }
-        catch(err){ setError(err.message||String(err)); } finally { setLoading(false); }
+        try {
+          if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted.");
+          await auth().signInWithEmailAndPassword(email, password);
+        } catch(err){ setError(err.message||String(err)); } finally { setLoading(false); }
       }
       async function handleSignup(e){
         e?.preventDefault(); setLoading(true); setError(null);
-        try { if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted."); const cred=await auth().createUserWithEmailAndPassword(email, password); if(name&&cred.user) await cred.user.updateProfile({displayName:name}); }
-        catch(err){ setError(err.message||String(err)); } finally { setLoading(false); }
+        try {
+          if(!(await isAllowlisted(email))) throw new Error("This email is not allowlisted.");
+          const cred=await auth().createUserWithEmailAndPassword(email, password);
+          if(name&&cred.user) await cred.user.updateProfile({displayName:name});
+        } catch(err){ setError(err.message||String(err)); } finally { setLoading(false); }
       }
 
       return (
@@ -1112,26 +1099,25 @@
       );
     }
 
-    function App(){
-      const [state, setState] = useState({ loading: true, user: null, allowed: false });
+    // ---------- Bootstrap ----------
+    function RootApp(){
+      const [state,setState]=useState({loading:true,user:null,allowed:false});
       useEffect(()=>{
-        return auth().onAuthStateChanged(async (user) => {
-          if (!user) {
-            setState({ loading: false, user: null, allowed: false });
-          } else {
-            const ok = await isAllowlisted(user.email || "");
-            if (!ok) { try { await auth().signOut(); } catch {} setState({ loading: false, user: null, allowed: false }); }
-            else { setState({ loading: false, user, allowed: true }); }
+        return auth().onAuthStateChanged(async (user)=>{
+          if(!user){ setState({loading:false,user:null,allowed:false}); }
+          else {
+            const ok = await isAllowlisted(user.email||"");
+            if(!ok){ try{await auth().signOut();}catch{} setState({loading:false,user:null,allowed:false}); }
+            else { setState({loading:false,user,allowed:true}); }
           }
         });
       },[]);
-
-      if (state.loading) return <div className="min-h-screen grid place-items-center bg-slate-50"><div className="text-slate-500">Loading…</div></div>;
-      if (!state.user || !state.allowed) return <AuthScreen />;
-      return <ChecklistApp userEmail={state.user.email} />;
+      if(state.loading) return <div className="min-h-screen grid place-items-center bg-slate-50"><div className="text-slate-500">Loading…</div></div>;
+      if(!state.user || !state.allowed) return <AuthScreen/>;
+      return <App/>;
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+    ReactDOM.createRoot(document.getElementById('root')).render(<RootApp/>);
   </script>
 </body>
 </html> 
